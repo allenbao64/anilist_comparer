@@ -20,6 +20,26 @@ const STATUS_ICONS: Record<AnimeStatus, string> = {
   REPEATING: '🔁',
 };
 
+const FORMAT_OPTIONS: { label: string; value: string }[] = [
+  { label: 'TV Show', value: 'TV' },
+  { label: 'Movie', value: 'MOVIE' },
+  { label: 'TV Short', value: 'TV_SHORT' },
+  { label: 'OVA', value: 'OVA' },
+  { label: 'ONA', value: 'ONA' },
+  { label: 'Special', value: 'SPECIAL' },
+  { label: 'Music', value: 'MUSIC' },
+];
+
+const FORMAT_LABELS: Record<string, string> = {
+  TV: 'TV Show',
+  TV_SHORT: 'TV Short',
+  MOVIE: 'Movie',
+  SPECIAL: 'Special',
+  OVA: 'OVA',
+  ONA: 'ONA',
+  MUSIC: 'Music',
+};
+
 export default function Home() {
   const [usernames, setUsernames] = useState<string[]>(['', '', '', '']);
   const [suggestedUserList, setSuggestedUserList] = useState<string[]>([]);
@@ -42,6 +62,19 @@ export default function Home() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
+  const [minYear, setMinYear] = useState('');
+  const [maxYear, setMaxYear] = useState('');
+  const [minEpisodes, setMinEpisodes] = useState('');
+  const [maxEpisodes, setMaxEpisodes] = useState('');
+  const [selectedFormats, setSelectedFormats] = useState<string[]>([]);
+
+  const toggleFormat = (format: string) => {
+    if (selectedFormats.includes(format)) {
+      setSelectedFormats(selectedFormats.filter(f => f !== format));
+    } else {
+      setSelectedFormats([...selectedFormats, format]);
+    }
+  };
 
   // Display Options
   const [showAllDetails, setShowAllDetails] = useState(false);
@@ -244,7 +277,16 @@ export default function Home() {
   const filteredResults = useMemo(() => {
     if (cachedUserData.length === 0) return [];
 
-    const animeMap = new Map<number, { id: number; title: string; userStatuses: Record<string, AnimeStatus>; genres: string[]; tags: string[] }>();
+    const animeMap = new Map<number, { 
+      id: number; 
+      title: string; 
+      userStatuses: Record<string, AnimeStatus>; 
+      genres: string[]; 
+      tags: string[];
+      year: number | null;
+      episodes: number | null;
+      format: string | null;
+    }>();
 
     cachedUserData.forEach(user => {
       activeStatuses.forEach(status => {
@@ -256,7 +298,10 @@ export default function Home() {
                 title: entry.title, 
                 userStatuses: {}, 
                 genres: entry.genres, 
-                tags: entry.tags 
+                tags: entry.tags,
+                year: entry.year,
+                episodes: entry.episodes,
+                format: entry.format,
               });
             }
             animeMap.get(entry.id)!.userStatuses[user.username] = status;
@@ -264,6 +309,11 @@ export default function Home() {
         }
       });
     });
+
+    const parsedMinYear = minYear.trim() !== '' ? parseInt(minYear, 10) : null;
+    const parsedMaxYear = maxYear.trim() !== '' ? parseInt(maxYear, 10) : null;
+    const parsedMinEp = minEpisodes.trim() !== '' ? parseInt(minEpisodes, 10) : null;
+    const parsedMaxEp = maxEpisodes.trim() !== '' ? parseInt(maxEpisodes, 10) : null;
 
     return Array.from(animeMap.values())
       .filter(item => {
@@ -278,10 +328,24 @@ export default function Home() {
         const matchesTags = selectedTags.length === 0 || 
           selectedTags.some(t => item.tags.includes(t));
 
-        return matchesUsers && matchesGenres && matchesTags;
+        // Release year range filter
+        const matchesMinYear = parsedMinYear === null || (item.year !== null && item.year >= parsedMinYear);
+        const matchesMaxYear = parsedMaxYear === null || (item.year !== null && item.year <= parsedMaxYear);
+        const matchesYear = matchesMinYear && matchesMaxYear;
+
+        // Episode count range filter
+        const matchesMinEp = parsedMinEp === null || (item.episodes !== null && item.episodes >= parsedMinEp);
+        const matchesMaxEp = parsedMaxEp === null || (item.episodes !== null && item.episodes <= parsedMaxEp);
+        const matchesEpisodes = matchesMinEp && matchesMaxEp;
+
+        // Format filter
+        const matchesFormat = selectedFormats.length === 0 ||
+          (item.format !== null && selectedFormats.includes(item.format));
+
+        return matchesUsers && matchesGenres && matchesTags && matchesYear && matchesEpisodes && matchesFormat;
       })
       .sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()));
-  }, [cachedUserData, activeStatuses, requiredUsers, selectedGenres, selectedTags]);
+  }, [cachedUserData, activeStatuses, requiredUsers, selectedGenres, selectedTags, minYear, maxYear, minEpisodes, maxEpisodes, selectedFormats]);
 
   const copyToClipboard = () => {
     if (filteredResults.length === 0) return;
@@ -555,6 +619,108 @@ export default function Home() {
               </div>
             </div>
 
+            <div>
+              <h3 style={{ fontSize: '1rem', marginBottom: '0.8rem' }}>Release Year (Range)</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  placeholder="Min (e.g. 2000)"
+                  value={minYear}
+                  onChange={(e) => setMinYear(e.target.value)}
+                  style={{ width: '120px', padding: '6px 10px', fontSize: '0.85rem' }}
+                  aria-label="Minimum release year"
+                />
+                <span>–</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  placeholder="Max (e.g. 2024)"
+                  value={maxYear}
+                  onChange={(e) => setMaxYear(e.target.value)}
+                  style={{ width: '120px', padding: '6px 10px', fontSize: '0.85rem' }}
+                  aria-label="Maximum release year"
+                />
+                {(minYear !== '' || maxYear !== '') && (
+                  <button
+                    type="button"
+                    onClick={() => { setMinYear(''); setMaxYear(''); }}
+                    style={{ background: 'none', color: 'var(--accent)', fontSize: '0.85rem', textDecoration: 'underline', padding: '0 4px' }}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <h3 style={{ fontSize: '1rem', marginBottom: '0.8rem' }}>Episode Count (Range)</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  placeholder="Min (e.g. 1)"
+                  value={minEpisodes}
+                  onChange={(e) => setMinEpisodes(e.target.value)}
+                  style={{ width: '105px', padding: '6px 10px', fontSize: '0.85rem' }}
+                  min="1"
+                  aria-label="Minimum episode count"
+                />
+                <span>–</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  placeholder="Max (e.g. 26)"
+                  value={maxEpisodes}
+                  onChange={(e) => setMaxEpisodes(e.target.value)}
+                  style={{ width: '105px', padding: '6px 10px', fontSize: '0.85rem' }}
+                  min="1"
+                  aria-label="Maximum episode count"
+                />
+                {(minEpisodes !== '' || maxEpisodes !== '') && (
+                  <button
+                    type="button"
+                    onClick={() => { setMinEpisodes(''); setMaxEpisodes(''); }}
+                    style={{ background: 'none', color: 'var(--accent)', fontSize: '0.85rem', textDecoration: 'underline', padding: '0 4px' }}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div style={{ gridColumn: '1 / -1' }}>
+              <h3 style={{ fontSize: '1rem', marginBottom: '0.8rem' }}>Filter by Format</h3>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', marginBottom: '1.5rem' }}>
+                {FORMAT_OPTIONS.map(format => (
+                  <button
+                    key={format.value}
+                    type="button"
+                    onClick={() => toggleFormat(format.value)}
+                    style={{
+                      padding: '4px 10px',
+                      fontSize: '0.85rem',
+                      background: selectedFormats.includes(format.value) ? 'var(--primary)' : 'var(--gray-100)',
+                      color: selectedFormats.includes(format.value) ? 'white' : 'var(--foreground)',
+                      border: `1px solid ${selectedFormats.includes(format.value) ? 'var(--primary)' : 'var(--gray-300)'}`,
+                      borderRadius: '16px'
+                    }}
+                  >
+                    {format.label}
+                  </button>
+                ))}
+                {selectedFormats.length > 0 && (
+                  <button 
+                    type="button"
+                    onClick={() => setSelectedFormats([])}
+                    style={{ background: 'none', color: 'var(--accent)', fontSize: '0.85rem', textDecoration: 'underline' }}
+                  >
+                    Clear Formats
+                  </button>
+                )}
+              </div>
+            </div>
+
             <div style={{ gridColumn: '1 / -1' }}>
               <h3 style={{ fontSize: '1rem', marginBottom: '0.8rem' }}>Filter by Genres</h3>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', marginBottom: '1.5rem' }}>
@@ -795,11 +961,26 @@ export default function Home() {
                           } as any)}
                         >
                           <div style={{ marginTop: '4px', paddingLeft: '14px' }}>
+                            {(anime.format || anime.episodes !== null || anime.year !== null) && (
+                              <div style={{ fontSize: '0.75rem', color: 'var(--foreground)', marginTop: '2px', display: 'flex', gap: '0.8rem', flexWrap: 'wrap' }}>
+                                {anime.format && (
+                                  <span><span style={{ fontWeight: 'bold' }}>Format:</span> {FORMAT_LABELS[anime.format] || anime.format}</span>
+                                )}
+                                {anime.episodes !== null && (
+                                  <span><span style={{ fontWeight: 'bold' }}>Episodes:</span> {anime.episodes}</span>
+                                )}
+                                {anime.year !== null && (
+                                  <span><span style={{ fontWeight: 'bold' }}>Year:</span> {anime.year}</span>
+                                )}
+                              </div>
+                            )}
                             <div style={{ fontSize: '0.7rem', color: 'var(--gray-800)', marginTop: '2px' }}>
-                              <span style={{ fontWeight: 'bold' }}>Genres:</span> {anime.genres.join(', ')}
+                              <span style={{ fontWeight: 'bold' }}>Genres:</span> {anime.genres.length > 0 ? anime.genres.join(', ') : 'None'}
                             </div>
                             <div style={{ fontSize: '0.7rem', color: 'var(--gray-600)', marginTop: '2px' }}>
-                              <span style={{ fontWeight: 'bold' }}>Tags:</span> {anime.tags.slice(0, 10).join(', ')}{anime.tags.length > 10 ? '...' : ''}
+                              <span style={{ fontWeight: 'bold' }}>Tags:</span> {anime.tags.length > 0 ? (
+                                anime.tags.slice(0, 10).join(', ') + (anime.tags.length > 10 ? '...' : '')
+                              ) : 'None'}
                             </div>
                           </div>
                         </div>

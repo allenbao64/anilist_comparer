@@ -7,6 +7,9 @@ export interface AnimeEntry {
   title: string;
   genres: string[];
   tags: string[];
+  year: number | null;
+  episodes: number | null;
+  format: string | null;
 }
 
 export interface UserStatusData {
@@ -31,6 +34,12 @@ query ($username: String, $page: Int, $status: MediaListStatus) {
         tags {
           name
         }
+        startDate {
+          year
+        }
+        seasonYear
+        episodes
+        format
       }
     }
   }
@@ -155,6 +164,9 @@ export async function fetchAllUserData(
           title: item.media.title.english || item.media.title.romaji,
           genres: item.media.genres || [],
           tags: item.media.tags?.map((t: any) => t.name) || [],
+          year: item.media.startDate?.year ?? item.media.seasonYear ?? null,
+          episodes: item.media.episodes ?? null,
+          format: item.media.format ?? null,
         }));
         
         allEntries = [...allEntries, ...entries];
