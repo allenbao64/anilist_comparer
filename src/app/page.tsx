@@ -525,14 +525,32 @@ export default function Home() {
               <h3 style={{ fontSize: '1rem', marginBottom: '0.8rem' }}>Required Contestants</h3>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.8rem' }}>
                 {cachedUserData.map(user => (
-                  <label key={user.username} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={requiredUsers.includes(user.username)}
-                      onChange={() => toggleRequiredUser(user.username)}
-                    />
-                    {user.username}
-                  </label>
+                  <div key={user.username} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={requiredUsers.includes(user.username)}
+                        onChange={() => toggleRequiredUser(user.username)}
+                      />
+                      <span>{user.username}</span>
+                    </label>
+                    <a
+                      href={`https://anilist.co/user/${encodeURIComponent(user.username)}/`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={`View ${user.username}'s AniList profile`}
+                      style={{
+                        fontSize: '0.75rem',
+                        color: 'var(--primary)',
+                        textDecoration: 'none',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        opacity: 0.8
+                      }}
+                    >
+                      ↗
+                    </a>
+                  </div>
                 ))}
               </div>
             </div>
@@ -677,10 +695,27 @@ export default function Home() {
                   <th style={{ padding: '12px' }}>Anime Title</th>
                   {cachedUserData.map(user => (
                     <th key={user.username} style={{ padding: '12px', textAlign: 'center' }}>
-                      <span style={{ color: requiredUsers.includes(user.username) ? 'var(--primary)' : 'inherit' }}>
-                        {user.username}
-                        {requiredUsers.includes(user.username) && <div style={{ fontSize: '0.6rem' }}>Required</div>}
-                      </span>
+                      <a
+                        href={`https://anilist.co/user/${encodeURIComponent(user.username)}/`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="user-profile-link"
+                        title={`View ${user.username}'s AniList profile`}
+                        style={{
+                          color: requiredUsers.includes(user.username) ? 'var(--primary)' : 'inherit',
+                          textDecoration: 'none',
+                          fontWeight: 'bold',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '3px',
+                          justifyContent: 'center',
+                          transition: 'color 0.15s ease'
+                        }}
+                      >
+                        <span>{user.username}</span>
+                        <span style={{ fontSize: '0.7rem', opacity: 0.7 }}>↗</span>
+                      </a>
+                      {requiredUsers.includes(user.username) && <div style={{ fontSize: '0.6rem', color: 'var(--primary)', marginTop: '2px' }}>Required</div>}
                     </th>
                   ))}
                 </tr>
@@ -691,39 +726,66 @@ export default function Home() {
                   return (
                     <tr key={idx} style={{ borderBottom: '1px solid var(--gray-200)', background: idx % 2 === 0 ? 'transparent' : 'var(--gray-100)' }}>
                       <td style={{ padding: isExpanded ? '10px 12px' : '8px 12px', fontWeight: 500 }}>
-                        <button
-                          type="button"
-                          onClick={() => toggleAnimeDetails(anime.id)}
-                          aria-expanded={isExpanded}
-                          className="title-toggle-btn"
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            padding: 0,
-                            margin: 0,
-                            font: 'inherit',
-                            color: 'inherit',
-                            textAlign: 'left',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          <span
-                            aria-hidden="true"
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            onClick={() => toggleAnimeDetails(anime.id)}
+                            aria-expanded={isExpanded}
+                            className="title-toggle-btn"
+                            title="Click to toggle genres & tags"
                             style={{
-                              fontSize: '0.65rem',
-                              color: 'var(--primary)',
-                              display: 'inline-block',
-                              transition: 'transform 0.15s ease',
-                              transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                              background: 'none',
+                              border: 'none',
+                              padding: 0,
+                              margin: 0,
+                              font: 'inherit',
+                              color: 'inherit',
+                              textAlign: 'left',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              cursor: 'pointer',
                             }}
                           >
-                            ▶
-                          </span>
-                          <span style={{ fontWeight: 600 }}>{anime.title}</span>
-                        </button>
+                            <span
+                              aria-hidden="true"
+                              style={{
+                                fontSize: '0.65rem',
+                                color: 'var(--primary)',
+                                display: 'inline-block',
+                                transition: 'transform 0.15s ease',
+                                transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                              }}
+                            >
+                              ▶
+                            </span>
+                            <span style={{ fontWeight: 600 }}>{anime.title}</span>
+                          </button>
+                          <a
+                            href={`https://anilist.co/anime/${anime.id}/`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="anilist-link-badge"
+                            title={`Open ${anime.title} on AniList`}
+                            style={{
+                              fontSize: '0.7rem',
+                              padding: '1px 6px',
+                              borderRadius: '4px',
+                              backgroundColor: 'var(--gray-200)',
+                              color: 'var(--primary)',
+                              textDecoration: 'none',
+                              fontWeight: 600,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '3px',
+                              border: '1px solid var(--gray-300)',
+                              lineHeight: '1.4',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            AniList ↗
+                          </a>
+                        </div>
                         <div
                           {...({
                             hidden: isExpanded ? undefined : 'until-found',
@@ -770,6 +832,15 @@ export default function Home() {
         }
         .title-toggle-btn:hover span:last-child {
           color: var(--primary);
+        }
+        .anilist-link-badge:hover {
+          background-color: var(--primary) !important;
+          color: white !important;
+          border-color: var(--primary) !important;
+        }
+        .user-profile-link:hover {
+          color: var(--primary-dark) !important;
+          text-decoration: underline !important;
         }
       `}</style>
     </main>
