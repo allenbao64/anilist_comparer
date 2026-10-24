@@ -43,6 +43,22 @@ export default function Home() {
   const [tagInput, setTagInput] = useState('');
   const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
 
+  // Display Options
+  const [showAllDetails, setShowAllDetails] = useState(false);
+  const [customExpanded, setCustomExpanded] = useState<Record<number, boolean>>({});
+
+  const toggleAnimeDetails = (id: number) => {
+    setCustomExpanded(prev => {
+      const isCurrentlyExpanded = prev[id] ?? showAllDetails;
+      return { ...prev, [id]: !isCurrentlyExpanded };
+    });
+  };
+
+  const toggleAllDetails = () => {
+    setShowAllDetails(prev => !prev);
+    setCustomExpanded({});
+  };
+
   // Load genres, tags, and suggested users on mount
   useEffect(() => {
     fetchGenres().then(setAvailableGenres).catch(console.error);
@@ -228,7 +244,7 @@ export default function Home() {
   const filteredResults = useMemo(() => {
     if (cachedUserData.length === 0) return [];
 
-    const animeMap = new Map<number, { title: string; userStatuses: Record<string, AnimeStatus>; genres: string[]; tags: string[] }>();
+    const animeMap = new Map<number, { id: number; title: string; userStatuses: Record<string, AnimeStatus>; genres: string[]; tags: string[] }>();
 
     cachedUserData.forEach(user => {
       activeStatuses.forEach(status => {
@@ -236,6 +252,7 @@ export default function Home() {
           user.statusData[status].forEach(entry => {
             if (!animeMap.has(entry.id)) {
               animeMap.set(entry.id, { 
+                id: entry.id,
                 title: entry.title, 
                 userStatuses: {}, 
                 genres: entry.genres, 
@@ -628,14 +645,29 @@ export default function Home() {
       {/* Results Section */}
       {cachedUserData.length > 0 && (
         <section>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.8rem' }}>
             <h2>Shared Anime ({filteredResults.length})</h2>
-            <button
-              onClick={copyToClipboard}
-              style={{ background: 'var(--secondary)', color: 'var(--gray-800)', padding: '8px 16px', fontWeight: 'bold' }}
-            >
-              📋 Copy for Table
-            </button>
+            <div style={{ display: 'flex', gap: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={toggleAllDetails}
+                style={{
+                  background: showAllDetails ? 'var(--primary)' : 'var(--gray-200)',
+                  color: showAllDetails ? 'white' : 'var(--foreground)',
+                  padding: '8px 16px',
+                  fontWeight: 'bold',
+                  border: `1px solid ${showAllDetails ? 'var(--primary)' : 'var(--gray-300)'}`
+                }}
+              >
+                {showAllDetails ? '🏷️ Hide Genres & Tags' : '🏷️ Show Genres & Tags'}
+              </button>
+              <button
+                onClick={copyToClipboard}
+                style={{ background: 'var(--secondary)', color: 'var(--gray-800)', padding: '8px 16px', fontWeight: 'bold' }}
+              >
+                📋 Copy for Table
+              </button>
+            </div>
           </div>
 
           <div style={{ overflowX: 'auto' }}>
@@ -654,24 +686,70 @@ export default function Home() {
                 </tr>
               </thead>
               <tbody>
-                {filteredResults.map((anime, idx) => (
-                  <tr key={idx} style={{ borderBottom: '1px solid var(--gray-200)', background: idx % 2 === 0 ? 'transparent' : 'var(--gray-100)' }}>
-                    <td style={{ padding: '12px', fontWeight: 500 }}>
-                      {anime.title}
-                      <div style={{ fontSize: '0.7rem', color: 'var(--gray-800)', marginTop: '2px' }}>
-                        <span style={{ fontWeight: 'bold' }}>Genres:</span> {anime.genres.join(', ')}
-                      </div>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--gray-600)', marginTop: '2px' }}>
-                        <span style={{ fontWeight: 'bold' }}>Tags:</span> {anime.tags.slice(0, 10).join(', ')}{anime.tags.length > 10 ? '...' : ''}
-                      </div>
-                    </td>
-                    {cachedUserData.map(user => (
-                      <td key={user.username} style={{ padding: '12px', textAlign: 'center', fontSize: '1.2rem' }}>
-                        {anime.userStatuses[user.username] ? STATUS_ICONS[anime.userStatuses[user.username]] : ''}
+                {filteredResults.map((anime, idx) => {
+                  const isExpanded = customExpanded[anime.id] ?? showAllDetails;
+                  return (
+                    <tr key={idx} style={{ borderBottom: '1px solid var(--gray-200)', background: idx % 2 === 0 ? 'transparent' : 'var(--gray-100)' }}>
+                      <td style={{ padding: isExpanded ? '10px 12px' : '8px 12px', fontWeight: 500 }}>
+                        <button
+                          type="button"
+                          onClick={() => toggleAnimeDetails(anime.id)}
+                          aria-expanded={isExpanded}
+                          className="title-toggle-btn"
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            padding: 0,
+                            margin: 0,
+                            font: 'inherit',
+                            color: 'inherit',
+                            textAlign: 'left',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <span
+                            aria-hidden="true"
+                            style={{
+                              fontSize: '0.65rem',
+                              color: 'var(--primary)',
+                              display: 'inline-block',
+                              transition: 'transform 0.15s ease',
+                              transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                            }}
+                          >
+                            ▶
+                          </span>
+                          <span style={{ fontWeight: 600 }}>{anime.title}</span>
+                        </button>
+                        <div
+                          {...({
+                            hidden: isExpanded ? undefined : 'until-found',
+                            onbeforematch: () => {
+                              setCustomExpanded(prev => ({ ...prev, [anime.id]: true }));
+                            }
+                          } as any)}
+                        >
+                          <div style={{ marginTop: '4px', paddingLeft: '14px' }}>
+                            <div style={{ fontSize: '0.7rem', color: 'var(--gray-800)', marginTop: '2px' }}>
+                              <span style={{ fontWeight: 'bold' }}>Genres:</span> {anime.genres.join(', ')}
+                            </div>
+                            <div style={{ fontSize: '0.7rem', color: 'var(--gray-600)', marginTop: '2px' }}>
+                              <span style={{ fontWeight: 'bold' }}>Tags:</span> {anime.tags.slice(0, 10).join(', ')}{anime.tags.length > 10 ? '...' : ''}
+                            </div>
+                          </div>
+                        </div>
                       </td>
-                    ))}
-                  </tr>
-                ))}
+                      {cachedUserData.map(user => (
+                        <td key={user.username} style={{ padding: isExpanded ? '10px 12px' : '8px 12px', textAlign: 'center', fontSize: '1.2rem' }}>
+                          {anime.userStatuses[user.username] ? STATUS_ICONS[anime.userStatuses[user.username]] : ''}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -689,6 +767,9 @@ export default function Home() {
         .suggestion-item:hover {
           background-color: var(--gray-300);
           color: var(--primary-dark);
+        }
+        .title-toggle-btn:hover span:last-child {
+          color: var(--primary);
         }
       `}</style>
     </main>
