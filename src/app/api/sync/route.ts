@@ -41,9 +41,17 @@ export async function POST(request: NextRequest) {
         // Store back in Redis if available
         if (redis) {
           try {
+            // Log payload size for debugging large lists
+            const jsonString = JSON.stringify(synced);
+            const sizeInKb = (jsonString.length / 1024).toFixed(2);
+            console.log(`[Upstash] Saving ${username} payload size: ${sizeInKb} KB`);
+
             await redis.set(getUserKey(username), synced);
-          } catch (e) {
-            console.warn(`Could not write cache for ${username} to Redis:`, e);
+            console.log(`[Upstash] Successfully cached ${username}`);
+          } catch (e: any) {
+            console.error(`[Upstash Error] Could not write cache for ${username} to Redis:`, e);
+            // Record the redis write error explicitly so it shows up in API response
+            errors[`${username}_redis`] = `Failed to cache in Redis: ${e.message || e}`;
           }
         }
 
