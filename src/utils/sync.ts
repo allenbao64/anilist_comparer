@@ -10,7 +10,7 @@ export interface CachedUserData {
 
 const SYNC_QUERY = `
 query ($username: String, $page: Int) {
-  Page(page: $page, perPage: 50) {
+  Page(page: $page, perPage: 500) {
     pageInfo {
       hasNextPage
     }
@@ -153,7 +153,7 @@ export async function syncUserFromAniList(
     page++;
 
     if (hasNextPage && !hitOlderThanCache) {
-      await new Promise(r => setTimeout(r, 350));
+      await new Promise(r => setTimeout(r, 150));
     }
   }
 
