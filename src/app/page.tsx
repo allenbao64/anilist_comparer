@@ -47,6 +47,7 @@ export default function Home() {
   const [userSuggestions, setUserSuggestions] = useState<string[]>([]);
   const [cachedUserData, setCachedUserData] = useState<UserStatusData[]>([]);
   const [userLastUpdated, setUserLastUpdated] = useState<Record<string, number>>({});
+  const [userUpdatesBehind, setUserUpdatesBehind] = useState<Record<string, number | null>>({});
   const [syncingUsers, setSyncingUsers] = useState<Record<string, boolean>>({});
   const [availableGenres, setAvailableGenres] = useState<string[]>([]);
   const [availableTags, setAvailableTags] = useState<string[]>([]);
@@ -273,11 +274,19 @@ export default function Home() {
           return Array.from(map.values());
         });
 
-        // Update timestamps
+        // Update timestamps and reset updates behind
         setUserLastUpdated(prev => {
           const next = { ...prev };
           data.users.forEach((updated: any) => {
             next[updated.username] = updated.lastUpdated;
+          });
+          return next;
+        });
+
+        setUserUpdatesBehind(prev => {
+          const next = { ...prev };
+          data.users.forEach((updated: any) => {
+            next[updated.username] = 0; // Just synced with live AniList!
           });
           return next;
         });
@@ -316,11 +325,12 @@ export default function Home() {
     
     const results: UserStatusData[] = [];
     const timestamps: Record<string, number> = {};
+    const updatesBehindMap: Record<string, number | null> = {};
     const missingUsernames: string[] = [];
 
-    // Step 1: Check server cache via /api/users
+    // Step 1: Check server cache via /api/users (with checkFreshness=true)
     try {
-      const checkRes = await fetch(`/api/users?users=${encodeURIComponent(validUsernames.join(','))}`);
+      const checkRes = await fetch(`/api/users?users=${encodeURIComponent(validUsernames.join(','))}&checkFreshness=true`);
       if (checkRes.ok) {
         const checkData = await checkRes.json();
         if (checkData.users && Array.isArray(checkData.users)) {
@@ -334,6 +344,7 @@ export default function Home() {
             if (found && found.statusData) {
               results.push({ username: found.username, statusData: found.statusData });
               timestamps[found.username] = found.lastUpdated;
+              updatesBehindMap[found.username] = typeof found.updatesBehind === 'number' ? found.updatesBehind : null;
             } else {
               missingUsernames.push(username);
             }
@@ -373,6 +384,7 @@ export default function Home() {
               if (synced && synced.statusData) {
                 results.push({ username: synced.username, statusData: synced.statusData });
                 timestamps[synced.username] = synced.lastUpdated;
+                updatesBehindMap[synced.username] = 0; // Newly synced
               } else {
                 stillMissing.push(username);
               }
@@ -396,6 +408,7 @@ export default function Home() {
 
     setCachedUserData(results);
     setUserLastUpdated(timestamps);
+    setUserUpdatesBehind(updatesBehindMap);
     setRequiredUsers(results.map(r => r.username));
     setIsLoading(false);
     setProgressMessage('');
@@ -1151,6 +1164,20 @@ export default function Home() {
                         {updatedText && (
                           <div style={{ fontSize: '0.65rem', color: 'var(--gray-800)', marginTop: '2px', opacity: 0.8 }}>
                             {updatedText}
+                          </div>
+                        )}
+                        {typeof userUpdatesBehind[user.username] === 'number' && (
+                          <div
+                            style={{
+                              fontSize: '0.65rem',
+                              fontWeight: 600,
+                              marginTop: '2px',
+                              color: userUpdatesBehind[user.username]! > 0 ? '#d97706' : '#16a34a',
+                            }}
+                          >
+                            {userUpdatesBehind[user.username]! > 0
+                              ? `${userUpdatesBehind[user.username]} update${userUpdatesBehind[user.username]! > 1 ? 's' : ''} behind`
+                              : 'Up to date'}
                           </div>
                         )}
                         {requiredUsers.includes(user.username) && (
