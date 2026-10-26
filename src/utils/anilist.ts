@@ -13,6 +13,7 @@ export interface AnimeEntry {
   averageScore: number | null;
   popularity: number | null;
   userScore: number | null;  // The fetching user's personal score (0 = unscored)
+  userProgress: number | null; // The number of episodes the user has watched
 }
 
 export interface UserStatusData {
@@ -28,6 +29,7 @@ query ($username: String, $page: Int, $status: MediaListStatus) {
     }
     mediaList(userName: $username, type: ANIME, status: $status) {
       score
+      progress
       media {
         id
         title {
@@ -176,6 +178,7 @@ export async function fetchAllUserData(
           averageScore: item.media.averageScore ?? null,
           popularity: item.media.popularity ?? null,
           userScore: (typeof item.score === 'number' && item.score > 0) ? item.score : null,
+          userProgress: typeof item.progress === 'number' ? item.progress : null,
         }));
         
         allEntries = [...allEntries, ...entries];
