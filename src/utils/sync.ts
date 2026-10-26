@@ -42,6 +42,100 @@ query ($username: String, $page: Int) {
   }
 }
 `;
+const BATCH_SYNC_QUERY = `
+query ($username: String, $p1: Int, $p2: Int, $p3: Int) {
+  page1: Page(page: $p1, perPage: 50) {
+    pageInfo {
+      hasNextPage
+    }
+    mediaList(userName: $username, type: ANIME, sort: UPDATED_TIME_DESC) {
+      status
+      score
+      progress
+      updatedAt
+      media {
+        id
+        title {
+          english
+          romaji
+        }
+        genres
+        tags {
+          name
+        }
+        startDate {
+          year
+        }
+        seasonYear
+        episodes
+        format
+        averageScore
+        popularity
+      }
+    }
+  }
+  page2: Page(page: $p2, perPage: 50) {
+    pageInfo {
+      hasNextPage
+    }
+    mediaList(userName: $username, type: ANIME, sort: UPDATED_TIME_DESC) {
+      status
+      score
+      progress
+      updatedAt
+      media {
+        id
+        title {
+          english
+          romaji
+        }
+        genres
+        tags {
+          name
+        }
+        startDate {
+          year
+        }
+        seasonYear
+        episodes
+        format
+        averageScore
+        popularity
+      }
+    }
+  }
+  page3: Page(page: $p3, perPage: 50) {
+    pageInfo {
+      hasNextPage
+    }
+    mediaList(userName: $username, type: ANIME, sort: UPDATED_TIME_DESC) {
+      status
+      score
+      progress
+      updatedAt
+      media {
+        id
+        title {
+          english
+          romaji
+        }
+        genres
+        tags {
+          name
+        }
+        startDate {
+          year
+        }
+        seasonYear
+        episodes
+        format
+        averageScore
+        popularity
+      }
+    }
+  }
+}
+`;
 
 /**
  * Perform incremental sync from AniList for a single user.
@@ -78,84 +172,159 @@ export async function syncUserFromAniList(
   }
 
   let hasNextPage = true;
-  let page = 1;
-  let hitOlderThanCache = false;
 
-  while (hasNextPage && !hitOlderThanCache) {
-    const res = await fetch(ANILIST_GRAPHQL_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({
-        query: SYNC_QUERY,
-        variables: { username, page },
-      }),
-    });
+  if (lastSyncTimestamp === 0) {
+      // Initial fetch (No Cache): Fetch 3 pages per HTTP request to finish in ~15s
+      let batchStartPage = 1;
+      let keepGoing = true;
 
-    if (res.status === 429) {
-      const retryAfter = parseInt(res.headers.get('Retry-After') || '10', 10);
-      await new Promise(r => setTimeout(r, retryAfter * 1000));
-      continue;
-    }
+      while (keepGoing) {
+        const res = await fetch(ANILIST_GRAPHQL_ENDPOINT, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            query: BATCH_SYNC_QUERY,
+            variables: {
+              username,
+              p1: batchStartPage,
+              p2: batchStartPage + 1,
+              p3: batchStartPage + 2,
+            },
+          }),
+        });
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.errors?.[0]?.message || `AniList returned status ${res.status}`);
-    }
+        if (res.status === 429) {
+          const retryAfter = parseInt(res.headers.get('Retry-After') || '10', 10);
+          await new Promise(r => setTimeout(r, retryAfter * 1000));
+          continue;
+        }
 
-    const json = await res.json();
-    const pageData = json.data?.Page;
-    if (!pageData?.mediaList) {
-      break;
-    }
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.errors?.[0]?.message || `AniList returned status ${res.status}`);
+        }
 
-    for (const item of pageData.mediaList) {
-      const itemUpdatedAt = item.updatedAt as number;
+        const json = await res.json();
+        const data = json.data || {};
+        const pages = [data.page1, data.page2, data.page3];
 
-      // If we already had a cache, and this item's updatedAt is older than or equal to our last sync time,
-      // and we've processed all newer items, we can safely stop pagination!
-      if (lastSyncTimestamp > 0 && itemUpdatedAt <= lastSyncTimestamp) {
-        hitOlderThanCache = true;
-        break;
-      }
+        for (const pageData of pages) {
+          if (!pageData?.mediaList || pageData.mediaList.length === 0) {
+            keepGoing = false;
+            break;
+          }
 
-      const status = item.status as AnimeStatus;
-      if (!existingMap[status]) continue;
+          for (const item of pageData.mediaList) {
+            const status = item.status as AnimeStatus;
+            if (!existingMap[status]) continue;
 
-      const animeEntry: AnimeEntry = {
-        id: item.media.id,
-        title: item.media.title.english || item.media.title.romaji,
-        genres: item.media.genres || [],
-        tags: item.media.tags?.map((t: any) => t.name) || [],
-        year: item.media.startDate?.year ?? item.media.seasonYear ?? null,
-        episodes: item.media.episodes ?? null,
-        format: item.media.format ?? null,
-        averageScore: item.media.averageScore ?? null,
-        popularity: item.media.popularity ?? null,
-        userScore: typeof item.score === 'number' && item.score > 0 ? item.score : null,
-        userProgress: typeof item.progress === 'number' ? item.progress : null,
-      };
+            const animeEntry: AnimeEntry = {
+              id: item.media.id,
+              title: item.media.title.english || item.media.title.romaji,
+              genres: item.media.genres || [],
+              tags: item.media.tags?.map((t: any) => t.name) || [],
+              year: item.media.startDate?.year ?? item.media.seasonYear ?? null,
+              episodes: item.media.episodes ?? null,
+              format: item.media.format ?? null,
+              averageScore: item.media.averageScore ?? null,
+              popularity: item.media.popularity ?? null,
+              userScore: typeof item.score === 'number' && item.score > 0 ? item.score : null,
+              userProgress: typeof item.progress === 'number' ? item.progress : null,
+            };
 
-      // Remove from any other status map in case the user moved it (e.g. from CURRENT to COMPLETED)
-      for (const [st, map] of Object.entries(existingMap)) {
-        if (st !== status) {
-          map.delete(animeEntry.id);
+            for (const [st, map] of Object.entries(existingMap)) {
+              if (st !== status) map.delete(animeEntry.id);
+            }
+            existingMap[status].set(animeEntry.id, animeEntry);
+          }
+
+          if (!pageData.pageInfo?.hasNextPage) {
+            keepGoing = false;
+            break;
+          }
+        }
+
+        batchStartPage += 3;
+        if (keepGoing) {
+          await new Promise(r => setTimeout(r, 250));
         }
       }
+    } else {
+      // Incremental Sync (Existing Cache): Page through normally 1 page at a time
+      let hasNextPage = true;
+      let page = 1;
+      let hitOlderThanCache = false;
 
-      // Add/update under current status
-      existingMap[status].set(animeEntry.id, animeEntry);
+      while (hasNextPage && !hitOlderThanCache) {
+        const res = await fetch(ANILIST_GRAPHQL_ENDPOINT, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            query: SYNC_QUERY,
+            variables: { username, page },
+          }),
+        });
+
+        if (res.status === 429) {
+          const retryAfter = parseInt(res.headers.get('Retry-After') || '10', 10);
+          await new Promise(r => setTimeout(r, retryAfter * 1000));
+          continue;
+        }
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.errors?.[0]?.message || `AniList returned status ${res.status}`);
+        }
+
+        const json = await res.json();
+        const pageData = json.data?.Page;
+        if (!pageData?.mediaList) break;
+
+        for (const item of pageData.mediaList) {
+          const itemUpdatedAt = item.updatedAt as number;
+
+          if (lastSyncTimestamp > 0 && itemUpdatedAt <= lastSyncTimestamp) {
+            hitOlderThanCache = true;
+            break;
+          }
+
+          const status = item.status as AnimeStatus;
+          if (!existingMap[status]) continue;
+
+          const animeEntry: AnimeEntry = {
+            id: item.media.id,
+            title: item.media.title.english || item.media.title.romaji,
+            genres: item.media.genres || [],
+            tags: item.media.tags?.map((t: any) => t.name) || [],
+            year: item.media.startDate?.year ?? item.media.seasonYear ?? null,
+            episodes: item.media.episodes ?? null,
+            format: item.media.format ?? null,
+            averageScore: item.media.averageScore ?? null,
+            popularity: item.media.popularity ?? null,
+            userScore: typeof item.score === 'number' && item.score > 0 ? item.score : null,
+            userProgress: typeof item.progress === 'number' ? item.progress : null,
+          };
+
+          for (const [st, map] of Object.entries(existingMap)) {
+            if (st !== status) map.delete(animeEntry.id);
+          }
+          existingMap[status].set(animeEntry.id, animeEntry);
+        }
+
+        hasNextPage = pageData.pageInfo?.hasNextPage ?? false;
+        page++;
+
+        if (hasNextPage && !hitOlderThanCache) {
+          await new Promise(r => setTimeout(r, 200));
+        }
+      }
     }
-
-    hasNextPage = pageData.pageInfo?.hasNextPage ?? false;
-    page++;
-
-    if (hasNextPage && !hitOlderThanCache) {
-      await new Promise(r => setTimeout(r, 350));
-    }
-  }
 
   // Convert maps back to array records
   const resultStatusData: Record<AnimeStatus, AnimeEntry[]> = {
