@@ -62,11 +62,16 @@ export default function Home() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
-  const [minYear, setMinYear] = useState('');
-  const [maxYear, setMaxYear] = useState('');
-  const [minEpisodes, setMinEpisodes] = useState('');
-  const [maxEpisodes, setMaxEpisodes] = useState('');
   const [selectedFormats, setSelectedFormats] = useState<string[]>([]);
+
+  // Slider filter ranges (null = use data-derived bounds)
+  const [episodeSliderMin, setEpisodeSliderMin] = useState<number | null>(null);
+  const [episodeSliderMax, setEpisodeSliderMax] = useState<number | null>(null);
+  const [yearSliderMin, setYearSliderMin] = useState<number | null>(null);
+  const [yearSliderMax, setYearSliderMax] = useState<number | null>(null);
+
+  // Sort
+  const [sortBy, setSortBy] = useState<'title' | 'averageScore' | 'year' | 'popularity'>('title');
 
   const toggleFormat = (format: string) => {
     if (selectedFormats.includes(format)) {
@@ -272,7 +277,28 @@ export default function Home() {
     setRequiredUsers(results.map(r => r.username));
     setIsLoading(false);
     setProgressMessage('');
+    // Reset sliders when data changes
+    setEpisodeSliderMin(null);
+    setEpisodeSliderMax(null);
+    setYearSliderMin(null);
+    setYearSliderMax(null);
   };
+
+  // Compute data-driven bounds for sliders
+  const dataRanges = useMemo(() => {
+    const allEntries: AnimeEntry[] = [];
+    cachedUserData.forEach(user => {
+      Object.values(user.statusData).forEach(entries => entries.forEach(e => allEntries.push(e)));
+    });
+    const years = allEntries.map(e => e.year).filter((y): y is number => y !== null);
+    const eps = allEntries.map(e => e.episodes).filter((e): e is number => e !== null);
+    return {
+      minYear: years.length > 0 ? Math.min(...years) : 1960,
+      maxYear: years.length > 0 ? Math.max(...years) : new Date().getFullYear(),
+      minEp: 1,
+      maxEp: eps.length > 0 ? Math.min(Math.max(...eps), 1000) : 200,
+    };
+  }, [cachedUserData]);
 
   const filteredResults = useMemo(() => {
     if (cachedUserData.length === 0) return [];
@@ -281,11 +307,14 @@ export default function Home() {
       id: number; 
       title: string; 
       userStatuses: Record<string, AnimeStatus>; 
+      userScores: Record<string, number | null>;
       genres: string[]; 
       tags: string[];
       year: number | null;
       episodes: number | null;
       format: string | null;
+      averageScore: number | null;
+      popularity: number | null;
     }>();
 
     cachedUserData.forEach(user => {
@@ -296,24 +325,24 @@ export default function Home() {
               animeMap.set(entry.id, { 
                 id: entry.id,
                 title: entry.title, 
-                userStatuses: {}, 
+                userStatuses: {},
+                userScores: {},
                 genres: entry.genres, 
                 tags: entry.tags,
                 year: entry.year,
                 episodes: entry.episodes,
                 format: entry.format,
+                averageScore: entry.averageScore,
+                popularity: entry.popularity,
               });
             }
-            animeMap.get(entry.id)!.userStatuses[user.username] = status;
+            const item = animeMap.get(entry.id)!;
+            item.userStatuses[user.username] = status;
+            item.userScores[user.username] = entry.userScore;
           });
         }
       });
     });
-
-    const parsedMinYear = minYear.trim() !== '' ? parseInt(minYear, 10) : null;
-    const parsedMaxYear = maxYear.trim() !== '' ? parseInt(maxYear, 10) : null;
-    const parsedMinEp = minEpisodes.trim() !== '' ? parseInt(minEpisodes, 10) : null;
-    const parsedMaxEp = maxEpisodes.trim() !== '' ? parseInt(maxEpisodes, 10) : null;
 
     return Array.from(animeMap.values())
       .filter(item => {
@@ -328,14 +357,14 @@ export default function Home() {
         const matchesTags = selectedTags.length === 0 || 
           selectedTags.some(t => item.tags.includes(t));
 
-        // Release year range filter
-        const matchesMinYear = parsedMinYear === null || (item.year !== null && item.year >= parsedMinYear);
-        const matchesMaxYear = parsedMaxYear === null || (item.year !== null && item.year <= parsedMaxYear);
+        // Release year range filter (slider)
+        const matchesMinYear = yearSliderMin === null || (item.year !== null && item.year >= yearSliderMin);
+        const matchesMaxYear = yearSliderMax === null || (item.year !== null && item.year <= yearSliderMax);
         const matchesYear = matchesMinYear && matchesMaxYear;
 
-        // Episode count range filter
-        const matchesMinEp = parsedMinEp === null || (item.episodes !== null && item.episodes >= parsedMinEp);
-        const matchesMaxEp = parsedMaxEp === null || (item.episodes !== null && item.episodes <= parsedMaxEp);
+        // Episode count range filter (slider)
+        const matchesMinEp = episodeSliderMin === null || (item.episodes !== null && item.episodes >= episodeSliderMin);
+        const matchesMaxEp = episodeSliderMax === null || (item.episodes !== null && item.episodes <= episodeSliderMax);
         const matchesEpisodes = matchesMinEp && matchesMaxEp;
 
         // Format filter
@@ -344,8 +373,19 @@ export default function Home() {
 
         return matchesUsers && matchesGenres && matchesTags && matchesYear && matchesEpisodes && matchesFormat;
       })
-      .sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()));
-  }, [cachedUserData, activeStatuses, requiredUsers, selectedGenres, selectedTags, minYear, maxYear, minEpisodes, maxEpisodes, selectedFormats]);
+      .sort((a, b) => {
+        switch (sortBy) {
+          case 'averageScore':
+            return (b.averageScore ?? -1) - (a.averageScore ?? -1);
+          case 'year':
+            return (b.year ?? 0) - (a.year ?? 0);
+          case 'popularity':
+            return (b.popularity ?? 0) - (a.popularity ?? 0);
+          default:
+            return a.title.toLowerCase().localeCompare(b.title.toLowerCase());
+        }
+      });
+  }, [cachedUserData, activeStatuses, requiredUsers, selectedGenres, selectedTags, yearSliderMin, yearSliderMax, episodeSliderMin, episodeSliderMax, selectedFormats, sortBy]);
 
   const copyToClipboard = () => {
     if (filteredResults.length === 0) return;
@@ -355,9 +395,13 @@ export default function Home() {
     
     // Plain text version (TSV)
     const tsvRows = filteredResults.map(anime => {
-      const userIcons = userList.map(username => 
-        anime.userStatuses[username] ? STATUS_ICONS[anime.userStatuses[username]] : ''
-      );
+      const userIcons = userList.map(username => {
+        const status = anime.userStatuses[username];
+        if (!status) return '';
+        const score = anime.userScores[username];
+        const icon = STATUS_ICONS[status] || '';
+        return score ? `${icon} ${score}` : icon;
+      });
       return [anime.title, ...userIcons].join('\t');
     });
     const tsvText = [headers.join('\t'), ...tsvRows].join('\n');
@@ -370,7 +414,9 @@ export default function Home() {
         ...userList.map(username => {
           const status = anime.userStatuses[username];
           const icon = status ? STATUS_ICONS[status] : '';
-          return `<td style="border: 1px solid #ccc; padding: 8px; text-align: center; font-size: 1.2rem;">${icon}</td>`;
+          const score = anime.userScores[username];
+          const content = (icon && score) ? `${icon} ${score}` : icon;
+          return `<td style="border: 1px solid #ccc; padding: 8px; text-align: center; font-size: 1.1rem;">${content}</td>`;
         })
       ];
       return `<tr>${cells.join('')}</tr>`;
@@ -620,70 +666,105 @@ export default function Home() {
             </div>
 
             <div>
-              <h3 style={{ fontSize: '1rem', marginBottom: '0.8rem' }}>Release Year (Range)</h3>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  placeholder="Min (e.g. 2000)"
-                  value={minYear}
-                  onChange={(e) => setMinYear(e.target.value)}
-                  style={{ width: '120px', padding: '6px 10px', fontSize: '0.85rem' }}
-                  aria-label="Minimum release year"
-                />
-                <span>–</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  placeholder="Max (e.g. 2024)"
-                  value={maxYear}
-                  onChange={(e) => setMaxYear(e.target.value)}
-                  style={{ width: '120px', padding: '6px 10px', fontSize: '0.85rem' }}
-                  aria-label="Maximum release year"
-                />
-                {(minYear !== '' || maxYear !== '') && (
+              <h3 style={{ fontSize: '1rem', marginBottom: '0.8rem' }}>
+                Episode Count
+                <span style={{ fontWeight: 400, color: 'var(--gray-800)', marginLeft: '0.5rem' }}>
+                  {episodeSliderMin ?? dataRanges.minEp} – {episodeSliderMax ?? dataRanges.maxEp}
+                  {episodeSliderMax === dataRanges.maxEp ? '+' : ''}
+                </span>
+              </h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                  <label style={{ fontSize: '0.8rem', minWidth: '32px', color: 'var(--gray-800)' }}>Min</label>
+                  <input
+                    type="range"
+                    min={dataRanges.minEp}
+                    max={dataRanges.maxEp}
+                    value={episodeSliderMin ?? dataRanges.minEp}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      setEpisodeSliderMin(v <= dataRanges.minEp ? null : v);
+                      if (episodeSliderMax !== null && v > episodeSliderMax) setEpisodeSliderMax(v);
+                    }}
+                    style={{ flex: 1, accentColor: 'var(--primary)' }}
+                    aria-label="Minimum episode count"
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                  <label style={{ fontSize: '0.8rem', minWidth: '32px', color: 'var(--gray-800)' }}>Max</label>
+                  <input
+                    type="range"
+                    min={dataRanges.minEp}
+                    max={dataRanges.maxEp}
+                    value={episodeSliderMax ?? dataRanges.maxEp}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      setEpisodeSliderMax(v >= dataRanges.maxEp ? null : v);
+                      if (episodeSliderMin !== null && v < episodeSliderMin) setEpisodeSliderMin(v);
+                    }}
+                    style={{ flex: 1, accentColor: 'var(--primary)' }}
+                    aria-label="Maximum episode count"
+                  />
+                </div>
+                {(episodeSliderMin !== null || episodeSliderMax !== null) && (
                   <button
                     type="button"
-                    onClick={() => { setMinYear(''); setMaxYear(''); }}
-                    style={{ background: 'none', color: 'var(--accent)', fontSize: '0.85rem', textDecoration: 'underline', padding: '0 4px' }}
+                    onClick={() => { setEpisodeSliderMin(null); setEpisodeSliderMax(null); }}
+                    style={{ background: 'none', color: 'var(--accent)', fontSize: '0.8rem', textDecoration: 'underline', textAlign: 'left', padding: 0 }}
                   >
-                    Clear
+                    Reset
                   </button>
                 )}
               </div>
             </div>
 
             <div>
-              <h3 style={{ fontSize: '1rem', marginBottom: '0.8rem' }}>Episode Count (Range)</h3>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  placeholder="Min (e.g. 1)"
-                  value={minEpisodes}
-                  onChange={(e) => setMinEpisodes(e.target.value)}
-                  style={{ width: '105px', padding: '6px 10px', fontSize: '0.85rem' }}
-                  min="1"
-                  aria-label="Minimum episode count"
-                />
-                <span>–</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  placeholder="Max (e.g. 26)"
-                  value={maxEpisodes}
-                  onChange={(e) => setMaxEpisodes(e.target.value)}
-                  style={{ width: '105px', padding: '6px 10px', fontSize: '0.85rem' }}
-                  min="1"
-                  aria-label="Maximum episode count"
-                />
-                {(minEpisodes !== '' || maxEpisodes !== '') && (
+              <h3 style={{ fontSize: '1rem', marginBottom: '0.8rem' }}>
+                Release Year
+                <span style={{ fontWeight: 400, color: 'var(--gray-800)', marginLeft: '0.5rem' }}>
+                  {yearSliderMin ?? dataRanges.minYear} – {yearSliderMax ?? dataRanges.maxYear}
+                </span>
+              </h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                  <label style={{ fontSize: '0.8rem', minWidth: '32px', color: 'var(--gray-800)' }}>Min</label>
+                  <input
+                    type="range"
+                    min={dataRanges.minYear}
+                    max={dataRanges.maxYear}
+                    value={yearSliderMin ?? dataRanges.minYear}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      setYearSliderMin(v <= dataRanges.minYear ? null : v);
+                      if (yearSliderMax !== null && v > yearSliderMax) setYearSliderMax(v);
+                    }}
+                    style={{ flex: 1, accentColor: 'var(--primary)' }}
+                    aria-label="Minimum release year"
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                  <label style={{ fontSize: '0.8rem', minWidth: '32px', color: 'var(--gray-800)' }}>Max</label>
+                  <input
+                    type="range"
+                    min={dataRanges.minYear}
+                    max={dataRanges.maxYear}
+                    value={yearSliderMax ?? dataRanges.maxYear}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      setYearSliderMax(v >= dataRanges.maxYear ? null : v);
+                      if (yearSliderMin !== null && v < yearSliderMin) setYearSliderMin(v);
+                    }}
+                    style={{ flex: 1, accentColor: 'var(--primary)' }}
+                    aria-label="Maximum release year"
+                  />
+                </div>
+                {(yearSliderMin !== null || yearSliderMax !== null) && (
                   <button
                     type="button"
-                    onClick={() => { setMinEpisodes(''); setMaxEpisodes(''); }}
-                    style={{ background: 'none', color: 'var(--accent)', fontSize: '0.85rem', textDecoration: 'underline', padding: '0 4px' }}
+                    onClick={() => { setYearSliderMin(null); setYearSliderMax(null); }}
+                    style={{ background: 'none', color: 'var(--accent)', fontSize: '0.8rem', textDecoration: 'underline', textAlign: 'left', padding: 0 }}
                   >
-                    Clear
+                    Reset
                   </button>
                 )}
               </div>
@@ -832,6 +913,28 @@ export default function Home() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.8rem' }}>
             <h2>Shared Anime ({filteredResults.length})</h2>
             <div style={{ display: 'flex', gap: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <label htmlFor="sort-select" style={{ fontSize: '0.85rem', color: 'var(--gray-800)', whiteSpace: 'nowrap' }}>Sort by:</label>
+                <select
+                  id="sort-select"
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                  style={{
+                    padding: '6px 10px',
+                    fontSize: '0.85rem',
+                    border: '1px solid var(--gray-300)',
+                    borderRadius: 'var(--border-radius)',
+                    background: 'var(--gray-100)',
+                    color: 'var(--foreground)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <option value="title">Alphabetical</option>
+                  <option value="averageScore">AniList Score ↓</option>
+                  <option value="popularity">Popularity ↓</option>
+                  <option value="year">Release Date ↓</option>
+                </select>
+              </div>
               <button
                 type="button"
                 onClick={toggleAllDetails}
@@ -961,7 +1064,7 @@ export default function Home() {
                           } as any)}
                         >
                           <div style={{ marginTop: '4px', paddingLeft: '14px' }}>
-                            {(anime.format || anime.episodes !== null || anime.year !== null) && (
+                            {(anime.format || anime.episodes !== null || anime.year !== null || anime.averageScore !== null || anime.popularity !== null) && (
                               <div style={{ fontSize: '0.75rem', color: 'var(--foreground)', marginTop: '2px', display: 'flex', gap: '0.8rem', flexWrap: 'wrap' }}>
                                 {anime.format && (
                                   <span><span style={{ fontWeight: 'bold' }}>Format:</span> {FORMAT_LABELS[anime.format] || anime.format}</span>
@@ -971,6 +1074,12 @@ export default function Home() {
                                 )}
                                 {anime.year !== null && (
                                   <span><span style={{ fontWeight: 'bold' }}>Year:</span> {anime.year}</span>
+                                )}
+                                {anime.averageScore !== null && (
+                                  <span><span style={{ fontWeight: 'bold' }}>AniList Score:</span> {anime.averageScore}%</span>
+                                )}
+                                {anime.popularity !== null && (
+                                  <span><span style={{ fontWeight: 'bold' }}>Popularity:</span> {anime.popularity.toLocaleString()}</span>
                                 )}
                               </div>
                             )}
@@ -985,11 +1094,24 @@ export default function Home() {
                           </div>
                         </div>
                       </td>
-                      {cachedUserData.map(user => (
-                        <td key={user.username} style={{ padding: isExpanded ? '10px 12px' : '8px 12px', textAlign: 'center', fontSize: '1.2rem' }}>
-                          {anime.userStatuses[user.username] ? STATUS_ICONS[anime.userStatuses[user.username]] : ''}
-                        </td>
-                      ))}
+                      {cachedUserData.map(user => {
+                        const status = anime.userStatuses[user.username];
+                        const score = anime.userScores[user.username];
+                        return (
+                          <td key={user.username} style={{ padding: isExpanded ? '10px 12px' : '8px 12px', textAlign: 'center', fontSize: '1.2rem', whiteSpace: 'nowrap' }}>
+                            {status ? (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                                <span>{STATUS_ICONS[status]}</span>
+                                {score !== null && score !== undefined && score > 0 && (
+                                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--foreground)' }}>
+                                    {score}
+                                  </span>
+                                )}
+                              </span>
+                            ) : ''}
+                          </td>
+                        );
+                      })}
                     </tr>
                   );
                 })}
