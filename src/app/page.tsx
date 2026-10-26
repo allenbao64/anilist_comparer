@@ -46,6 +46,8 @@ export default function Home() {
   const [activeUserIndex, setActiveUserIndex] = useState<number | null>(null);
   const [userSuggestions, setUserSuggestions] = useState<string[]>([]);
   const [cachedUserData, setCachedUserData] = useState<UserStatusData[]>([]);
+  const [userLastUpdated, setUserLastUpdated] = useState<Record<string, number>>({});
+  const [syncingUsers, setSyncingUsers] = useState<Record<string, boolean>>({});
   const [availableGenres, setAvailableGenres] = useState<string[]>([]);
   const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -222,6 +224,81 @@ export default function Home() {
     setProgressMessage('Stopping...');
   };
 
+  const formatLastUpdated = (timestampSec?: number) => {
+    if (!timestampSec) return null;
+    const date = new Date(timestampSec * 1000);
+    const now = Date.now();
+    const diffMin = Math.floor((now - date.getTime()) / 60000);
+    if (diffMin < 1) return 'Just now';
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHours = Math.floor(diffMin / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  };
+
+  const syncSpecificUsers = async (targetUsernames: string[], forceFull = false) => {
+    if (targetUsernames.length === 0) return;
+    
+    // Mark these users as syncing
+    setSyncingUsers(prev => {
+      const next = { ...prev };
+      targetUsernames.forEach(u => { next[u] = true; });
+      return next;
+    });
+
+    try {
+      const res = await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ usernames: targetUsernames, forceFullRefresh: forceFull }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Sync failed with status ${res.status}`);
+      }
+
+      const data = await res.json();
+      if (data.users && Array.isArray(data.users)) {
+        // Update cachedUserData state
+        setCachedUserData(prev => {
+          const map = new Map(prev.map(item => [item.username.toLowerCase(), item]));
+          data.users.forEach((updated: any) => {
+            map.set(updated.username.toLowerCase(), {
+              username: updated.username,
+              statusData: updated.statusData,
+            });
+          });
+          return Array.from(map.values());
+        });
+
+        // Update timestamps
+        setUserLastUpdated(prev => {
+          const next = { ...prev };
+          data.users.forEach((updated: any) => {
+            next[updated.username] = updated.lastUpdated;
+          });
+          return next;
+        });
+      }
+
+      if (data.errors && Object.keys(data.errors).length > 0) {
+        const errorList = Object.entries(data.errors).map(([u, e]) => `${u}: ${e}`);
+        setErrors(prev => [...prev, ...errorList]);
+      }
+    } catch (err: any) {
+      console.error('Error during sync:', err);
+      setErrors(prev => [...prev, `Sync error: ${err.message || 'Unknown'}`]);
+    } finally {
+      setSyncingUsers(prev => {
+        const next = { ...prev };
+        targetUsernames.forEach(u => { delete next[u]; });
+        return next;
+      });
+    }
+  };
+
   const startGrandLoad = async () => {
     const validUsernames = usernames.filter(u => u.trim() !== '');
     if (validUsernames.length < 1) {
@@ -231,16 +308,102 @@ export default function Home() {
 
     setIsLoading(true);
     setErrors([]);
-    setProgressMessage('Starting load...');
+    setProgressMessage('Checking cached lists...');
     abortLoadingRef.current = false;
     
     // Set Phase 2 filters to match what we are loading
     setActiveStatuses([...fetchStatuses]);
     
     const results: UserStatusData[] = [];
+    const timestamps: Record<string, number> = {};
+    const missingUsernames: string[] = [];
+
+    // Step 1: Check server cache via /api/users
+    try {
+      const checkRes = await fetch(`/api/users?users=${encodeURIComponent(validUsernames.join(','))}`);
+      if (checkRes.ok) {
+        const checkData = await checkRes.json();
+        if (checkData.users && Array.isArray(checkData.users)) {
+          const foundMap = new Map<string, any>();
+          checkData.users.forEach((u: any) => {
+            foundMap.set(u.username.toLowerCase(), u);
+          });
+
+          for (const username of validUsernames) {
+            const found = foundMap.get(username.toLowerCase());
+            if (found && found.statusData) {
+              results.push({ username: found.username, statusData: found.statusData });
+              timestamps[found.username] = found.lastUpdated;
+            } else {
+              missingUsernames.push(username);
+            }
+          }
+        } else {
+          missingUsernames.push(...validUsernames);
+        }
+      } else {
+        missingUsernames.push(...validUsernames);
+      }
+    } catch (e) {
+      console.warn('Could not contact /api/users, will sync or fetch directly:', e);
+      missingUsernames.push(...validUsernames);
+    }
+
+    // Step 2: If any users were missing from cache, sync them
+    if (missingUsernames.length > 0 && !abortLoadingRef.current) {
+      setProgressMessage(`Syncing ${missingUsernames.length} user(s) from AniList...`);
+      try {
+        const syncRes = await fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ usernames: missingUsernames }),
+        });
+
+        if (syncRes.ok) {
+          const syncData = await syncRes.json();
+          if (syncData.users && Array.isArray(syncData.users)) {
+            const syncedMap = new Map<string, any>();
+            syncData.users.forEach((u: any) => {
+              syncedMap.set(u.username.toLowerCase(), u);
+            });
+
+            const stillMissing: string[] = [];
+            for (const username of missingUsernames) {
+              const synced = syncedMap.get(username.toLowerCase());
+              if (synced && synced.statusData) {
+                results.push({ username: synced.username, statusData: synced.statusData });
+                timestamps[synced.username] = synced.lastUpdated;
+              } else {
+                stillMissing.push(username);
+              }
+            }
+
+            // If some failed via server sync, fallback to direct client-side fetch for them
+            if (stillMissing.length > 0 && !abortLoadingRef.current) {
+              await clientSideFetchFallback(stillMissing, results);
+            }
+          } else {
+            await clientSideFetchFallback(missingUsernames, results);
+          }
+        } else {
+          await clientSideFetchFallback(missingUsernames, results);
+        }
+      } catch (e) {
+        console.warn('Sync route failed, falling back to client-side AniList:', e);
+        await clientSideFetchFallback(missingUsernames, results);
+      }
+    }
+
+    setCachedUserData(results);
+    setUserLastUpdated(timestamps);
+    setRequiredUsers(results.map(r => r.username));
+    setIsLoading(false);
+    setProgressMessage('');
+  };
+
+  const clientSideFetchFallback = async (usernamesToFetch: string[], results: UserStatusData[]) => {
+    let pending = [...usernamesToFetch];
     const fatalErrors: string[] = [];
-    
-    let pending = [...validUsernames];
 
     while (pending.length > 0 && !abortLoadingRef.current) {
       const current = pending[0];
@@ -249,12 +412,12 @@ export default function Home() {
           setProgressMessage(msg);
         });
         results.push({ username: current, statusData });
-        pending.shift(); // Success!
+        pending.shift();
       } catch (err: any) {
         const errMsg = err.message || '';
         if (errMsg.includes('FATAL')) {
           fatalErrors.push(`${current}: User not found or private.`);
-          pending.shift(); // Can't fix this, skip
+          pending.shift();
         } else {
           for (let i = 5; i > 0; i--) {
             if (abortLoadingRef.current) break;
@@ -265,16 +428,9 @@ export default function Home() {
       }
     }
 
-    if (abortLoadingRef.current) {
-      setErrors([...fatalErrors, 'Loading was cancelled by user.']);
-    } else {
-      setErrors(fatalErrors);
+    if (fatalErrors.length > 0) {
+      setErrors(prev => [...prev, ...fatalErrors]);
     }
-
-    setCachedUserData(results);
-    setRequiredUsers(results.map(r => r.username));
-    setIsLoading(false);
-    setProgressMessage('');
   };
 
   const filteredResults = useMemo(() => {
@@ -899,6 +1055,26 @@ export default function Home() {
               </div>
               <button
                 type="button"
+                onClick={() => syncSpecificUsers(cachedUserData.map(u => u.username))}
+                disabled={Object.values(syncingUsers).some(Boolean)}
+                title="Fetch any newly added or updated anime from AniList without re-downloading everything"
+                style={{
+                  background: 'var(--gray-200)',
+                  color: 'var(--foreground)',
+                  padding: '8px 16px',
+                  fontWeight: 'bold',
+                  border: '1px solid var(--gray-300)',
+                  cursor: Object.values(syncingUsers).some(Boolean) ? 'wait' : 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <span>🔄</span>
+                <span>{Object.values(syncingUsers).some(Boolean) ? 'Updating...' : 'Update All Lists'}</span>
+              </button>
+              <button
+                type="button"
                 onClick={toggleAllDetails}
                 style={{
                   background: showAllDetails ? 'var(--primary)' : 'var(--gray-200)',
@@ -924,31 +1100,67 @@ export default function Home() {
               <thead>
                 <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--gray-300)' }}>
                   <th style={{ padding: '12px' }}>Anime Title</th>
-                  {cachedUserData.map(user => (
-                    <th key={user.username} style={{ padding: '12px', textAlign: 'center' }}>
-                      <a
-                        href={`https://anilist.co/user/${encodeURIComponent(user.username)}/`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="user-profile-link"
-                        title={`View ${user.username}'s AniList profile`}
-                        style={{
-                          color: requiredUsers.includes(user.username) ? 'var(--primary)' : 'inherit',
-                          textDecoration: 'none',
-                          fontWeight: 'bold',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '3px',
-                          justifyContent: 'center',
-                          transition: 'color 0.15s ease'
-                        }}
-                      >
-                        <span>{user.username}</span>
-                        <span style={{ fontSize: '0.7rem', opacity: 0.7 }}>↗</span>
-                      </a>
-                      {requiredUsers.includes(user.username) && <div style={{ fontSize: '0.6rem', color: 'var(--primary)', marginTop: '2px' }}>Required</div>}
-                    </th>
-                  ))}
+                  {cachedUserData.map(user => {
+                    const isUserSyncing = !!syncingUsers[user.username];
+                    const updatedText = formatLastUpdated(userLastUpdated[user.username]);
+                    return (
+                      <th key={user.username} style={{ padding: '12px', textAlign: 'center', minWidth: '110px' }}>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
+                          <a
+                            href={`https://anilist.co/user/${encodeURIComponent(user.username)}/`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="user-profile-link"
+                            title={`View ${user.username}'s AniList profile`}
+                            style={{
+                              color: requiredUsers.includes(user.username) ? 'var(--primary)' : 'inherit',
+                              textDecoration: 'none',
+                              fontWeight: 'bold',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '3px',
+                              justifyContent: 'center',
+                              transition: 'color 0.15s ease'
+                            }}
+                          >
+                            <span>{user.username}</span>
+                            <span style={{ fontSize: '0.7rem', opacity: 0.7 }}>↗</span>
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => syncSpecificUsers([user.username])}
+                            disabled={isUserSyncing}
+                            title={`Update ${user.username}'s list`}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              cursor: isUserSyncing ? 'wait' : 'pointer',
+                              padding: '2px',
+                              lineHeight: 1,
+                              fontSize: '0.85rem',
+                              opacity: isUserSyncing ? 0.4 : 0.7,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                            }}
+                          >
+                            <span style={{ display: 'inline-block', animation: isUserSyncing ? 'spin 1s linear infinite' : 'none' }}>
+                              🔄
+                            </span>
+                          </button>
+                        </div>
+                        {updatedText && (
+                          <div style={{ fontSize: '0.65rem', color: 'var(--gray-800)', marginTop: '2px', opacity: 0.8 }}>
+                            {updatedText}
+                          </div>
+                        )}
+                        {requiredUsers.includes(user.username) && (
+                          <div style={{ fontSize: '0.6rem', color: 'var(--primary)', marginTop: '2px', fontWeight: 600 }}>
+                            Required
+                          </div>
+                        )}
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
