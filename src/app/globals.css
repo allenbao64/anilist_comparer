@@ -70,3 +70,36 @@ input:focus {
   margin: 0 auto;
   padding: 2rem;
 }
+
+.spinner {
+  display: inline-block;
+  animation: rotate 2s linear infinite;
+}
+
+@keyframes rotate {
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes spin {
+  100% { transform: rotate(360deg); }
+}
+
+.suggestion-item:hover {
+  background-color: var(--gray-300);
+  color: var(--primary-dark);
+}
+
+.title-toggle-btn:hover span:last-child {
+  color: var(--primary);
+}
+
+.anilist-link-badge:hover {
+  background-color: var(--primary) !important;
+  color: white !important;
+  border-color: var(--primary) !important;
+}
+
+.user-profile-link:hover {
+  color: var(--primary-dark) !important;
+  text-decoration: underline !important;
+}

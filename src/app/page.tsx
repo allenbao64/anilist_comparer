@@ -1,7 +1,9 @@
 'use client';
 
-import { useState, useMemo, useRef, useEffect } from 'react';
-import { fetchAllUserData, fetchGenres, fetchTags, AnimeEntry, AnimeStatus, UserStatusData } from '@/utils/anilist';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { fetchAllUserData, AnimeStatus, UserStatusData } from '@/utils/anilist';
+import { GameSession } from '@/types/session';
+import SessionShell, { type WorkspaceProps } from '@/components/shell';
 
 const STATUS_OPTIONS: { label: string; value: AnimeStatus }[] = [
   { label: 'Completed', value: 'COMPLETED' },
@@ -40,45 +42,84 @@ const FORMAT_LABELS: Record<string, string> = {
   MUSIC: 'Music',
 };
 
-export default function Home() {
-  const [usernames, setUsernames] = useState<string[]>(['', '', '', '']);
-  const [suggestedUserList, setSuggestedUserList] = useState<string[]>([]);
+function UntilFound({
+  collapsed,
+  onReveal,
+  children,
+}: {
+  collapsed: boolean;
+  onReveal: () => void;
+  children: ReactNode;
+}) {
+  const onRevealRef = useRef(onReveal);
+  onRevealRef.current = onReveal;
+  const bindingRef = useRef<{ node: HTMLDivElement; handler: () => void } | null>(null);
+
+  const bind = useCallback((node: HTMLDivElement | null) => {
+    const prev = bindingRef.current;
+    if (prev) {
+      prev.node.removeEventListener('beforematch', prev.handler);
+      bindingRef.current = null;
+    }
+    if (!node) return;
+
+    if (collapsed) {
+      node.setAttribute('hidden', 'until-found');
+      const handler = () => onRevealRef.current();
+      node.addEventListener('beforematch', handler);
+      bindingRef.current = { node, handler };
+    } else {
+      node.removeAttribute('hidden');
+    }
+  }, [collapsed]);
+
+  return <div ref={bind}>{children}</div>;
+}
+
+export function Home({
+  session,
+  onSessionChange,
+  availableGenres,
+  availableTags,
+  suggestedUserList,
+}: WorkspaceProps) {
   const [activeUserIndex, setActiveUserIndex] = useState<number | null>(null);
   const [userSuggestions, setUserSuggestions] = useState<string[]>([]);
   const [cachedUserData, setCachedUserData] = useState<UserStatusData[]>([]);
   const [userLastUpdated, setUserLastUpdated] = useState<Record<string, number>>({});
   const [userUpdatesBehind, setUserUpdatesBehind] = useState<Record<string, number | null>>({});
   const [syncingUsers, setSyncingUsers] = useState<Record<string, boolean>>({});
-  const [availableGenres, setAvailableGenres] = useState<string[]>([]);
-  const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [progressMessage, setProgressMessage] = useState<string>('');
   const [errors, setErrors] = useState<string[]>([]);
   const [showErrorDetails, setShowErrorDetails] = useState(false);
-  const [fetchStatuses, setFetchStatuses] = useState<AnimeStatus[]>(['COMPLETED', 'CURRENT']);
   const abortLoadingRef = useRef(false);
 
-  // Filters (Phase 2)
-  const [activeStatuses, setActiveStatuses] = useState<AnimeStatus[]>(['COMPLETED', 'CURRENT']);
-  const [requiredUsers, setRequiredUsers] = useState<string[]>([]);
-  const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const {
+    usernames,
+    fetchStatuses,
+    activeStatuses,
+    requiredUsers,
+    selectedGenres,
+    selectedTags,
+    selectedFormats,
+    minEpisodes,
+    maxEpisodes,
+    minYear,
+    maxYear,
+    sortBy,
+  } = session;
+
+  const patch = (next: Partial<GameSession>) => onSessionChange(next);
+
   const [tagInput, setTagInput] = useState('');
   const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
-  const [selectedFormats, setSelectedFormats] = useState<string[]>([]);
-  const [minEpisodes, setMinEpisodes] = useState('');
-  const [maxEpisodes, setMaxEpisodes] = useState('');
-  const [minYear, setMinYear] = useState('');
-  const [maxYear, setMaxYear] = useState('');
-
-  // Sort
-  const [sortBy, setSortBy] = useState<'title' | 'averageScore' | 'year' | 'popularity'>('title');
 
   const toggleFormat = (format: string) => {
     if (selectedFormats.includes(format)) {
-      setSelectedFormats(selectedFormats.filter(f => f !== format));
+      patch({ selectedFormats: selectedFormats.filter(f => f !== format) });
     } else {
-      setSelectedFormats([...selectedFormats, format]);
+      patch({ selectedFormats: [...selectedFormats, format] });
     }
   };
 
@@ -98,19 +139,6 @@ export default function Home() {
     setCustomExpanded({});
   };
 
-  // Load genres, tags, and suggested users on mount
-  useEffect(() => {
-    fetchGenres().then(setAvailableGenres).catch(console.error);
-    fetchTags().then(setAvailableTags).catch(console.error);
-    fetch('/users.txt')
-      .then(res => res.text())
-      .then(text => {
-        const list = text.split('\n').map(u => u.trim()).filter(u => u !== '');
-        setSuggestedUserList(list);
-      })
-      .catch(console.error);
-  }, []);
-
   // Update tag suggestions when input changes
   useEffect(() => {
     if (tagInput.trim().length > 1) {
@@ -126,29 +154,29 @@ export default function Home() {
   const toggleFetchStatus = (status: AnimeStatus) => {
     if (fetchStatuses.includes(status)) {
       if (fetchStatuses.length > 1) {
-        setFetchStatuses(fetchStatuses.filter(s => s !== status));
+        patch({ fetchStatuses: fetchStatuses.filter(s => s !== status) });
       }
     } else {
-      setFetchStatuses([...fetchStatuses, status]);
+      patch({ fetchStatuses: [...fetchStatuses, status] });
     }
   };
 
   const addUser = () => {
     if (usernames.length < 10) {
-      setUsernames([...usernames, '']);
+      patch({ usernames: [...usernames, ''] });
     }
   };
 
   const removeUser = (index: number) => {
     const newUsers = [...usernames];
     newUsers.splice(index, 1);
-    setUsernames(newUsers);
+    patch({ usernames: newUsers });
   };
 
   const updateUsername = (index: number, value: string) => {
     const newUsers = [...usernames];
     newUsers[index] = value;
-    setUsernames(newUsers);
+    patch({ usernames: newUsers });
     showUserSuggestions(index, value);
   };
 
@@ -164,7 +192,7 @@ export default function Home() {
   const selectUserSuggestion = (index: number, username: string) => {
     const newUsers = [...usernames];
     newUsers[index] = username;
-    setUsernames(newUsers);
+    patch({ usernames: newUsers });
     setUserSuggestions([]);
     setActiveUserIndex(null);
   };
@@ -172,48 +200,55 @@ export default function Home() {
   const toggleStatusFilter = (status: AnimeStatus) => {
     if (activeStatuses.includes(status)) {
       if (activeStatuses.length > 1) {
-        setActiveStatuses(activeStatuses.filter(s => s !== status));
+        patch({ activeStatuses: activeStatuses.filter(s => s !== status) });
       }
     } else {
-      setActiveStatuses([...activeStatuses, status]);
+      patch({ activeStatuses: [...activeStatuses, status] });
     }
   };
 
   const toggleRequiredUser = (username: string) => {
     if (requiredUsers.includes(username)) {
-      setRequiredUsers(requiredUsers.filter(u => u !== username));
+      patch({ requiredUsers: requiredUsers.filter(u => u !== username) });
     } else {
-      setRequiredUsers([...requiredUsers, username]);
+      patch({ requiredUsers: [...requiredUsers, username] });
     }
   };
 
   const toggleGenre = (genre: string) => {
     if (selectedGenres.includes(genre)) {
-      setSelectedGenres(selectedGenres.filter(g => g !== genre));
+      patch({ selectedGenres: selectedGenres.filter(g => g !== genre) });
     } else {
-      setSelectedGenres([...selectedGenres, genre]);
+      patch({ selectedGenres: [...selectedGenres, genre] });
     }
   };
 
   const addTag = (tag: string) => {
     if (!selectedTags.includes(tag)) {
-      setSelectedTags([...selectedTags, tag]);
+      patch({ selectedTags: [...selectedTags, tag] });
     }
     setTagInput('');
     setTagSuggestions([]);
   };
 
   const removeTag = (tag: string) => {
-    setSelectedTags(selectedTags.filter(t => t !== tag));
+    patch({ selectedTags: selectedTags.filter(t => t !== tag) });
   };
 
   const reset = () => {
-    setUsernames(['', '', '', '']);
+    patch({
+      usernames: ['', '', '', ''],
+      requiredUsers: [],
+      selectedGenres: [],
+      selectedTags: [],
+      selectedFormats: [],
+      minEpisodes: '',
+      maxEpisodes: '',
+      minYear: '',
+      maxYear: '',
+    });
     setCachedUserData([]);
     setErrors([]);
-    setRequiredUsers([]);
-    setSelectedGenres([]);
-    setSelectedTags([]);
     setTagInput('');
     setIsLoading(false);
     setProgressMessage('');
@@ -308,7 +343,7 @@ export default function Home() {
     }
   };
 
-  const startGrandLoad = async () => {
+  const startGrandLoad = async (opts?: { preserveFilters?: boolean }) => {
     const validUsernames = usernames.filter(u => u.trim() !== '');
     if (validUsernames.length < 1) {
       setErrors(['Please enter at least one username.']);
@@ -320,8 +355,9 @@ export default function Home() {
     setProgressMessage('Checking cached lists...');
     abortLoadingRef.current = false;
     
-    // Set Phase 2 filters to match what we are loading
-    setActiveStatuses([...fetchStatuses]);
+    if (!opts?.preserveFilters) {
+      patch({ activeStatuses: [...fetchStatuses] });
+    }
     
     const results: UserStatusData[] = [];
     const timestamps: Record<string, number> = {};
@@ -409,7 +445,9 @@ export default function Home() {
     setCachedUserData(results);
     setUserLastUpdated(timestamps);
     setUserUpdatesBehind(updatesBehindMap);
-    setRequiredUsers(results.map(r => r.username));
+    if (!opts?.preserveFilters) {
+      patch({ requiredUsers: results.map(r => r.username) });
+    }
     setIsLoading(false);
     setProgressMessage('');
   };
@@ -445,6 +483,16 @@ export default function Home() {
       setErrors(prev => [...prev, ...fatalErrors]);
     }
   };
+
+  const autoLoadStarted = useRef(false);
+  useEffect(() => {
+    if (autoLoadStarted.current) return;
+    if (!usernames.some(u => u.trim() !== '')) return;
+    autoLoadStarted.current = true;
+    void startGrandLoad({ preserveFilters: true });
+    // Mount-only: session.id keys the workspace so switching games remounts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filteredResults = useMemo(() => {
     if (cachedUserData.length === 0) return [];
@@ -614,12 +662,7 @@ export default function Home() {
   };
 
   return (
-    <main className="container">
-      <header style={{ marginBottom: '2rem', textAlign: 'center' }}>
-        <h1 style={{ color: 'var(--primary)', fontSize: '2.5rem' }}>AniList Comparer</h1>
-        <p style={{ color: 'var(--gray-800)' }}>Jeopardy Game Planning Tool</p>
-      </header>
-
+    <>
       <section style={{ backgroundColor: 'var(--gray-100)', padding: '1.5rem', borderRadius: 'var(--border-radius)', marginBottom: '2rem' }}>
         <h2 style={{ marginBottom: '1rem', fontSize: '1.2rem' }}>Phase 1: Enter Contestants (Max 10)</h2>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
@@ -718,7 +761,7 @@ export default function Home() {
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
           {!isLoading ? (
             <button
-              onClick={startGrandLoad}
+              onClick={() => startGrandLoad()}
               style={{
                 background: 'var(--primary)',
                 color: 'white',
@@ -839,7 +882,7 @@ export default function Home() {
                   inputMode="numeric"
                   placeholder="Min (e.g. 1)"
                   value={minEpisodes}
-                  onChange={(e) => setMinEpisodes(e.target.value)}
+                  onChange={(e) => patch({ minEpisodes: e.target.value })}
                   style={{ width: '105px', padding: '6px 10px', fontSize: '0.85rem' }}
                   min="1"
                   aria-label="Minimum episode count"
@@ -850,7 +893,7 @@ export default function Home() {
                   inputMode="numeric"
                   placeholder="Max (e.g. 26)"
                   value={maxEpisodes}
-                  onChange={(e) => setMaxEpisodes(e.target.value)}
+                  onChange={(e) => patch({ maxEpisodes: e.target.value })}
                   style={{ width: '105px', padding: '6px 10px', fontSize: '0.85rem' }}
                   min="1"
                   aria-label="Maximum episode count"
@@ -858,7 +901,7 @@ export default function Home() {
                 {(minEpisodes !== '' || maxEpisodes !== '') && (
                   <button
                     type="button"
-                    onClick={() => { setMinEpisodes(''); setMaxEpisodes(''); }}
+                    onClick={() => { patch({ minEpisodes: '', maxEpisodes: '' }); }}
                     style={{ background: 'none', color: 'var(--accent)', fontSize: '0.85rem', textDecoration: 'underline', padding: '0 4px' }}
                   >
                     Clear
@@ -875,7 +918,7 @@ export default function Home() {
                   inputMode="numeric"
                   placeholder="Min (e.g. 2000)"
                   value={minYear}
-                  onChange={(e) => setMinYear(e.target.value)}
+                  onChange={(e) => patch({ minYear: e.target.value })}
                   style={{ width: '120px', padding: '6px 10px', fontSize: '0.85rem' }}
                   aria-label="Minimum release year"
                 />
@@ -885,14 +928,14 @@ export default function Home() {
                   inputMode="numeric"
                   placeholder="Max (e.g. 2024)"
                   value={maxYear}
-                  onChange={(e) => setMaxYear(e.target.value)}
+                  onChange={(e) => patch({ maxYear: e.target.value })}
                   style={{ width: '120px', padding: '6px 10px', fontSize: '0.85rem' }}
                   aria-label="Maximum release year"
                 />
                 {(minYear !== '' || maxYear !== '') && (
                   <button
                     type="button"
-                    onClick={() => { setMinYear(''); setMaxYear(''); }}
+                    onClick={() => { patch({ minYear: '', maxYear: '' }); }}
                     style={{ background: 'none', color: 'var(--accent)', fontSize: '0.85rem', textDecoration: 'underline', padding: '0 4px' }}
                   >
                     Clear
@@ -924,7 +967,7 @@ export default function Home() {
                 {selectedFormats.length > 0 && (
                   <button 
                     type="button"
-                    onClick={() => setSelectedFormats([])}
+                    onClick={() => patch({ selectedFormats: [] })}
                     style={{ background: 'none', color: 'var(--accent)', fontSize: '0.85rem', textDecoration: 'underline' }}
                   >
                     Clear Formats
@@ -954,7 +997,7 @@ export default function Home() {
                 ))}
                 {selectedGenres.length > 0 && (
                   <button 
-                    onClick={() => setSelectedGenres([])}
+                    onClick={() => patch({ selectedGenres: [] })}
                     style={{ background: 'none', color: 'var(--accent)', fontSize: '0.85rem', textDecoration: 'underline' }}
                   >
                     Clear Genres
@@ -1026,7 +1069,7 @@ export default function Home() {
                 ))}
                 {selectedTags.length > 0 && (
                   <button 
-                    onClick={() => setSelectedTags([])}
+                    onClick={() => patch({ selectedTags: [] })}
                     style={{ background: 'none', color: 'var(--accent)', fontSize: '0.85rem', textDecoration: 'underline' }}
                   >
                     Clear Tags
@@ -1042,14 +1085,16 @@ export default function Home() {
       {cachedUserData.length > 0 && (
         <section>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.8rem' }}>
-            <h2>Shared Anime ({filteredResults.length})</h2>
+            <h2>
+              Shared Anime ({filteredResults.length})
+            </h2>
             <div style={{ display: 'flex', gap: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <label htmlFor="sort-select" style={{ fontSize: '0.85rem', color: 'var(--gray-800)', whiteSpace: 'nowrap' }}>Sort by:</label>
                 <select
                   id="sort-select"
                   value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                  onChange={(e) => patch({ sortBy: e.target.value as GameSession['sortBy'] })}
                   style={{
                     padding: '6px 10px',
                     fontSize: '0.85rem',
@@ -1194,7 +1239,13 @@ export default function Home() {
                 {filteredResults.map((anime, idx) => {
                   const isExpanded = customExpanded[anime.id] ?? showAllDetails;
                   return (
-                    <tr key={idx} style={{ borderBottom: '1px solid var(--gray-200)', background: idx % 2 === 0 ? 'transparent' : 'var(--gray-100)' }}>
+                    <tr
+                      key={anime.id}
+                      style={{
+                        borderBottom: '1px solid var(--gray-200)',
+                        background: idx % 2 === 0 ? 'transparent' : 'var(--gray-100)',
+                      }}
+                    >
                       <td style={{ padding: isExpanded ? '10px 12px' : '8px 12px', fontWeight: 500 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                           <button
@@ -1256,13 +1307,11 @@ export default function Home() {
                             AniList ↗
                           </a>
                         </div>
-                        <div
-                          {...({
-                            hidden: isExpanded ? undefined : 'until-found',
-                            onbeforematch: () => {
-                              setCustomExpanded(prev => ({ ...prev, [anime.id]: true }));
-                            }
-                          } as any)}
+                        <UntilFound
+                          collapsed={!isExpanded}
+                          onReveal={() => {
+                            setCustomExpanded(prev => ({ ...prev, [anime.id]: true }));
+                          }}
                         >
                           <div style={{ marginTop: '4px', paddingLeft: '14px' }}>
                             {(anime.format || anime.episodes !== null || anime.year !== null || anime.averageScore !== null || anime.popularity !== null) && (
@@ -1293,7 +1342,7 @@ export default function Home() {
                               ) : 'None'}
                             </div>
                           </div>
-                        </div>
+                        </UntilFound>
                       </td>
                       {cachedUserData.map(user => {
                         const status = anime.userStatuses[user.username];
@@ -1332,13 +1381,6 @@ export default function Home() {
       )}
 
       <style jsx>{`
-        .spinner {
-          display: inline-block;
-          animation: rotate 2s linear infinite;
-        }
-        @keyframes rotate {
-          100% { transform: rotate(360deg); }
-        }
         .suggestion-item:hover {
           background-color: var(--gray-300);
           color: var(--primary-dark);
@@ -1356,6 +1398,14 @@ export default function Home() {
           text-decoration: underline !important;
         }
       `}</style>
-    </main>
+    </>
+  );
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={<main className="container"><p>Loading…</p></main>}>
+      <SessionShell Workspace={Home} />
+    </Suspense>
   );
 }
