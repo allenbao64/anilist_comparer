@@ -372,7 +372,7 @@ export function Home({
     abortLoadingRef.current = false;
     
     if (!opts?.preserveFilters) {
-      patch({ activeStatuses: [...fetchStatuses] });
+      patch({ activeStatuses: [...fetchStatuses], includedAnimeIds: [] });
     }
     
     const results: UserStatusData[] = [];
