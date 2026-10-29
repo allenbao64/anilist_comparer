@@ -19,6 +19,7 @@ export interface GameSession {
   minYear: string;
   maxYear: string;
   sortBy: SessionSortBy;
+  includedAnimeIds: number[];
 }
 
 export const DEFAULT_FETCH_STATUSES: AnimeStatus[] = ['COMPLETED', 'CURRENT'];
@@ -49,12 +50,18 @@ export function createDefaultSession(overrides: Partial<GameSession> = {}): Game
     minYear: overrides.minYear ?? '',
     maxYear: overrides.maxYear ?? '',
     sortBy: overrides.sortBy ?? 'title',
+    includedAnimeIds: overrides.includedAnimeIds ? [...overrides.includedAnimeIds] : [],
   };
 }
 
 function asStringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   return value.filter((item): item is string => typeof item === 'string');
+}
+
+function asNumberArray(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((item): item is number => typeof item === 'number' && Number.isFinite(item));
 }
 
 const SORT_VALUES: SessionSortBy[] = ['title', 'averageScore', 'year', 'popularity'];
@@ -86,5 +93,6 @@ export function normalizeSession(raw: unknown, fallbackId?: string): GameSession
     minYear: typeof data.minYear === 'string' ? data.minYear : undefined,
     maxYear: typeof data.maxYear === 'string' ? data.maxYear : undefined,
     sortBy,
+    includedAnimeIds: asNumberArray(data.includedAnimeIds),
   });
 }

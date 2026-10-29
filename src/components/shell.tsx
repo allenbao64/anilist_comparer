@@ -167,6 +167,7 @@ export default function SessionShell({ Workspace }: { Workspace: ComponentType<W
       selectedGenres: [...source.selectedGenres],
       selectedTags: [...source.selectedTags],
       selectedFormats: [...source.selectedFormats],
+      includedAnimeIds: [...source.includedAnimeIds],
     });
     const insertAt = current.openIds.indexOf(id);
     const openIds = [...current.openIds];
