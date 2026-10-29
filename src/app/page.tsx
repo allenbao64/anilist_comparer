@@ -1419,47 +1419,48 @@ export function Home({
               </tbody>
             </table>
           </div>
-          <aside className="game-summary">
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', flexWrap: 'wrap', marginBottom: includedAnime.length === 0 ? 0 : '0.75rem' }}>
-              <h3 style={{ fontSize: '1rem' }}>Game summary</h3>
-              {includedAnime.length > 0 && (
-                <p style={{ fontSize: '0.85rem' }}>
-                  {includedAnime.length} question{includedAnime.length === 1 ? '' : 's'}
-                  {hiddenIncludedCount > 0 && (
-                    <span style={{ color: 'var(--gray-800)' }}> · {hiddenIncludedCount} hidden by current filters</span>
-                  )}
-                </p>
-              )}
-              {includedAnimeIds.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => patch({ includedAnimeIds: [] })}
-                  style={{ marginLeft: 'auto', background: 'none', color: 'var(--accent)', fontSize: '0.85rem', textDecoration: 'underline', padding: 0 }}
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-            {includedAnime.length > 0 && (
-              <div className="game-summary-people">
-                {cachedUserData.map(user => {
-                  const onList = includedAnime.filter(anime => !!anime.userStatuses[user.username]).length;
-                  const pct = Math.round((onList / includedAnime.length) * 100);
-                  return (
-                    <div key={user.username} className="game-summary-person">
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', fontSize: '0.85rem' }}>
-                        <span style={{ fontWeight: 600 }}>{user.username}</span>
-                        <span style={{ whiteSpace: 'nowrap' }}>{onList} / {includedAnime.length} ({pct}%)</span>
-                      </div>
-                      <div style={{ marginTop: '4px', height: '8px', borderRadius: '999px', background: 'var(--gray-200)', overflow: 'hidden' }}>
-                        <div style={{ width: `${pct}%`, height: '100%', background: 'var(--primary)' }} />
-                      </div>
-                    </div>
-                  );
-                })}
+          {includedAnime.length > 0 && (
+            <aside className="game-summary">
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', flexWrap: 'wrap', marginBottom: includedAnime.length === 0 ? 0 : '0.75rem' }}>
+                <h3 style={{ fontSize: '1rem' }}>Game summary</h3>
+                {includedAnime.length > 0 && (
+                  <p style={{ fontSize: '0.85rem' }}>
+                    {includedAnime.length} question{includedAnime.length === 1 ? '' : 's'}
+                    {hiddenIncludedCount > 0 && (
+                      <span style={{ color: 'var(--gray-800)' }}> · {hiddenIncludedCount} hidden by current filters</span>
+                    )}
+                  </p>
+                )}
+                {includedAnimeIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => patch({ includedAnimeIds: [] })}
+                    style={{ marginLeft: 'auto', background: 'none', color: 'var(--accent)', fontSize: '0.85rem', textDecoration: 'underline', padding: 0 }}
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
-            )}
-          </aside>
+              
+                <div className="game-summary-people">
+                  {cachedUserData.map(user => {
+                    const onList = includedAnime.filter(anime => !!anime.userStatuses[user.username]).length;
+                    const pct = Math.round((onList / includedAnime.length) * 100);
+                    return (
+                      <div key={user.username} className="game-summary-person">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', fontSize: '0.85rem' }}>
+                          <span style={{ fontWeight: 600 }}>{user.username}</span>
+                          <span style={{ whiteSpace: 'nowrap' }}>{onList} / {includedAnime.length} ({pct}%)</span>
+                        </div>
+                        <div style={{ marginTop: '4px', height: '8px', borderRadius: '999px', background: 'var(--gray-200)', overflow: 'hidden' }}>
+                          <div style={{ width: `${pct}%`, height: '100%', background: 'var(--primary)' }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+            </aside>
+          )}
           </div>
         </section>
       )}
