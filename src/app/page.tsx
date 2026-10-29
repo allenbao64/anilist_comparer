@@ -42,6 +42,21 @@ const FORMAT_LABELS: Record<string, string> = {
   MUSIC: 'Music',
 };
 
+interface SharedAnime {
+  id: number;
+  title: string;
+  userStatuses: Record<string, AnimeStatus>;
+  userScores: Record<string, number | null>;
+  userProgresses: Record<string, number | null>;
+  genres: string[];
+  tags: string[];
+  year: number | null;
+  episodes: number | null;
+  format: string | null;
+  averageScore: number | null;
+  popularity: number | null;
+}
+
 function UntilFound({
   collapsed,
   onReveal,
@@ -108,6 +123,7 @@ export function Home({
     minYear,
     maxYear,
     sortBy,
+    includedAnimeIds,
   } = session;
 
   const patch = (next: Partial<GameSession>) => onSessionChange(next);
@@ -494,23 +510,10 @@ export function Home({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const filteredResults = useMemo(() => {
-    if (cachedUserData.length === 0) return [];
+  const animePool = useMemo(() => {
+    if (cachedUserData.length === 0) return [] as SharedAnime[];
 
-    const animeMap = new Map<number, { 
-      id: number; 
-      title: string; 
-      userStatuses: Record<string, AnimeStatus>; 
-      userScores: Record<string, number | null>;
-      userProgresses: Record<string, number | null>;
-      genres: string[]; 
-      tags: string[];
-      year: number | null;
-      episodes: number | null;
-      format: string | null;
-      averageScore: number | null;
-      popularity: number | null;
-    }>();
+    const animeMap = new Map<number, SharedAnime>();
 
     cachedUserData.forEach(user => {
       activeStatuses.forEach(status => {
@@ -541,12 +544,16 @@ export function Home({
       });
     });
 
+    return Array.from(animeMap.values());
+  }, [cachedUserData, activeStatuses]);
+
+  const filteredResults = useMemo(() => {
     const parsedMinYear = minYear.trim() !== '' ? parseInt(minYear, 10) : null;
     const parsedMaxYear = maxYear.trim() !== '' ? parseInt(maxYear, 10) : null;
     const parsedMinEp = minEpisodes.trim() !== '' ? parseInt(minEpisodes, 10) : null;
     const parsedMaxEp = maxEpisodes.trim() !== '' ? parseInt(maxEpisodes, 10) : null;
 
-    return Array.from(animeMap.values())
+    return animePool
       .filter(item => {
         // Must be seen by EVERY user in requiredUsers
         const matchesUsers = requiredUsers.every(reqUser => !!item.userStatuses[reqUser]);
@@ -587,7 +594,28 @@ export function Home({
             return a.title.toLowerCase().localeCompare(b.title.toLowerCase());
         }
       });
-  }, [cachedUserData, activeStatuses, requiredUsers, selectedGenres, selectedTags, minYear, maxYear, minEpisodes, maxEpisodes, selectedFormats, sortBy]);
+  }, [animePool, requiredUsers, selectedGenres, selectedTags, minYear, maxYear, minEpisodes, maxEpisodes, selectedFormats, sortBy]);
+
+  const includedIdSet = useMemo(() => new Set(includedAnimeIds), [includedAnimeIds]);
+
+  const includedAnime = useMemo(
+    () => animePool.filter(anime => includedIdSet.has(anime.id)),
+    [animePool, includedIdSet],
+  );
+
+  const hiddenIncludedCount = useMemo(() => {
+    if (includedAnime.length === 0) return 0;
+    const visibleIds = new Set(filteredResults.map(anime => anime.id));
+    return includedAnime.filter(anime => !visibleIds.has(anime.id)).length;
+  }, [includedAnime, filteredResults]);
+
+  const toggleIncluded = (id: number) => {
+    patch({
+      includedAnimeIds: includedIdSet.has(id)
+        ? includedAnimeIds.filter(existing => existing !== id)
+        : [...includedAnimeIds, id],
+    });
+  };
 
   const copyToClipboard = () => {
     if (filteredResults.length === 0) return;
@@ -1153,10 +1181,12 @@ export function Home({
             </div>
           </div>
 
-          <div style={{ overflowX: 'auto' }}>
+          <div className="results-layout">
+          <div className="results-table-wrap">
             <table style={{ width: '100%', borderCollapse: 'collapse', background: 'var(--background)' }}>
               <thead>
                 <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--gray-300)' }}>
+                  <th style={{ padding: '12px 8px', width: '36px' }} aria-label="Include in game" />
                   <th style={{ padding: '12px' }}>Anime Title</th>
                   {cachedUserData.map(user => {
                     const isUserSyncing = !!syncingUsers[user.username];
@@ -1238,14 +1268,26 @@ export function Home({
               <tbody>
                 {filteredResults.map((anime, idx) => {
                   const isExpanded = customExpanded[anime.id] ?? showAllDetails;
+                  const included = includedIdSet.has(anime.id);
                   return (
                     <tr
                       key={anime.id}
                       style={{
                         borderBottom: '1px solid var(--gray-200)',
-                        background: idx % 2 === 0 ? 'transparent' : 'var(--gray-100)',
+                        background: included
+                          ? 'color-mix(in srgb, var(--primary) 16%, transparent)'
+                          : idx % 2 === 0 ? 'transparent' : 'var(--gray-100)',
+                        boxShadow: included ? 'inset 3px 0 0 var(--primary)' : undefined,
                       }}
                     >
+                      <td style={{ padding: isExpanded ? '10px 8px' : '8px', textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={included}
+                          onChange={() => toggleIncluded(anime.id)}
+                          aria-label={`Include ${anime.title} in the game`}
+                        />
+                      </td>
                       <td style={{ padding: isExpanded ? '10px 12px' : '8px 12px', fontWeight: 500 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                           <button
@@ -1377,6 +1419,48 @@ export function Home({
               </tbody>
             </table>
           </div>
+          <aside className="game-summary">
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', flexWrap: 'wrap', marginBottom: includedAnime.length === 0 ? 0 : '0.75rem' }}>
+              <h3 style={{ fontSize: '1rem' }}>Game summary</h3>
+              {includedAnime.length > 0 && (
+                <p style={{ fontSize: '0.85rem' }}>
+                  {includedAnime.length} question{includedAnime.length === 1 ? '' : 's'}
+                  {hiddenIncludedCount > 0 && (
+                    <span style={{ color: 'var(--gray-800)' }}> · {hiddenIncludedCount} hidden by current filters</span>
+                  )}
+                </p>
+              )}
+              {includedAnimeIds.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => patch({ includedAnimeIds: [] })}
+                  style={{ marginLeft: 'auto', background: 'none', color: 'var(--accent)', fontSize: '0.85rem', textDecoration: 'underline', padding: 0 }}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            {includedAnime.length > 0 && (
+              <div className="game-summary-people">
+                {cachedUserData.map(user => {
+                  const onList = includedAnime.filter(anime => !!anime.userStatuses[user.username]).length;
+                  const pct = Math.round((onList / includedAnime.length) * 100);
+                  return (
+                    <div key={user.username} className="game-summary-person">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', fontSize: '0.85rem' }}>
+                        <span style={{ fontWeight: 600 }}>{user.username}</span>
+                        <span style={{ whiteSpace: 'nowrap' }}>{onList} / {includedAnime.length} ({pct}%)</span>
+                      </div>
+                      <div style={{ marginTop: '4px', height: '8px', borderRadius: '999px', background: 'var(--gray-200)', overflow: 'hidden' }}>
+                        <div style={{ width: `${pct}%`, height: '100%', background: 'var(--primary)' }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </aside>
+          </div>
         </section>
       )}
 
@@ -1396,6 +1480,35 @@ export function Home({
         .user-profile-link:hover {
           color: var(--primary-dark) !important;
           text-decoration: underline !important;
+        }
+        .results-layout {
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+        }
+        .results-table-wrap {
+          min-width: 0;
+          overflow-x: auto;
+        }
+        .game-summary {
+          order: -1;
+          position: sticky;
+          top: 3.5rem;
+          z-index: 2;
+          width: 100%;
+          background: var(--gray-100);
+          border: 1px solid var(--gray-300);
+          border-radius: var(--border-radius);
+          padding: 0.85rem 1rem;
+        }
+        .game-summary-people {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.75rem 1.25rem;
+        }
+        .game-summary-person {
+          flex: 1 1 180px;
+          min-width: 160px;
         }
       `}</style>
     </>
