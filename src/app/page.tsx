@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type React
 import { fetchAllUserData, AnimeStatus, UserStatusData } from '@/utils/anilist';
 import { GameSession } from '@/types/session';
 import SessionShell, { type WorkspaceProps } from '@/components/shell';
+import GamePlanner from '@/components/gamePlanner';
 
 const STATUS_OPTIONS: { label: string; value: AnimeStatus }[] = [
   { label: 'Completed', value: 'COMPLETED' },
@@ -1448,6 +1449,14 @@ export function Home({
             </table>
           </div>
         </section>
+      )}
+
+      {cachedUserData.length > 0 && (
+        <GamePlanner
+          session={session}
+          onSessionChange={onSessionChange}
+          cachedUserData={cachedUserData}
+        />
       )}
 
       <style jsx>{`
