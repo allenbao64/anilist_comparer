@@ -11,6 +11,7 @@ export interface GameSession {
   fetchStatuses: AnimeStatus[];
   activeStatuses: AnimeStatus[];
   requiredUsers: string[];
+  excludedUsers: string[];
   selectedGenres: string[];
   selectedTags: string[];
   selectedFormats: string[];
@@ -41,6 +42,7 @@ export function createDefaultSession(overrides: Partial<GameSession> = {}): Game
     fetchStatuses: overrides.fetchStatuses ?? [...DEFAULT_FETCH_STATUSES],
     activeStatuses: overrides.activeStatuses ?? [...DEFAULT_FETCH_STATUSES],
     requiredUsers: overrides.requiredUsers ?? [],
+    excludedUsers: overrides.excludedUsers ?? [],
     selectedGenres: overrides.selectedGenres ?? [],
     selectedTags: overrides.selectedTags ?? [],
     selectedFormats: overrides.selectedFormats ?? [],
@@ -78,6 +80,7 @@ export function normalizeSession(raw: unknown, fallbackId?: string): GameSession
     fetchStatuses: asStringArray(data.fetchStatuses) as AnimeStatus[] | undefined,
     activeStatuses: asStringArray(data.activeStatuses) as AnimeStatus[] | undefined,
     requiredUsers: asStringArray(data.requiredUsers),
+    excludedUsers: asStringArray(data.excludedUsers),
     selectedGenres: asStringArray(data.selectedGenres),
     selectedTags: asStringArray(data.selectedTags),
     selectedFormats: asStringArray(data.selectedFormats),

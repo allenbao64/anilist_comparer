@@ -100,6 +100,7 @@ export function Home({
     fetchStatuses,
     activeStatuses,
     requiredUsers,
+    excludedUsers = [],
     selectedGenres,
     selectedTags,
     selectedFormats,
@@ -211,7 +212,40 @@ export function Home({
     if (requiredUsers.includes(username)) {
       patch({ requiredUsers: requiredUsers.filter(u => u !== username) });
     } else {
-      patch({ requiredUsers: [...requiredUsers, username] });
+      patch({
+        requiredUsers: [...requiredUsers, username],
+        excludedUsers: excludedUsers.filter(u => u !== username),
+      });
+    }
+  };
+
+  const toggleExcludedUser = (username: string) => {
+    if (excludedUsers.includes(username)) {
+      patch({ excludedUsers: excludedUsers.filter(u => u !== username) });
+    } else {
+      patch({
+        excludedUsers: [...excludedUsers, username],
+        requiredUsers: requiredUsers.filter(u => u !== username),
+      });
+    }
+  };
+
+  const setUserFilterState = (username: string, state: 'include' | 'exclude' | 'optional') => {
+    if (state === 'include') {
+      patch({
+        requiredUsers: requiredUsers.includes(username) ? requiredUsers : [...requiredUsers, username],
+        excludedUsers: excludedUsers.filter(u => u !== username),
+      });
+    } else if (state === 'exclude') {
+      patch({
+        excludedUsers: excludedUsers.includes(username) ? excludedUsers : [...excludedUsers, username],
+        requiredUsers: requiredUsers.filter(u => u !== username),
+      });
+    } else {
+      patch({
+        requiredUsers: requiredUsers.filter(u => u !== username),
+        excludedUsers: excludedUsers.filter(u => u !== username),
+      });
     }
   };
 
@@ -239,6 +273,7 @@ export function Home({
     patch({
       usernames: ['', '', '', ''],
       requiredUsers: [],
+      excludedUsers: [],
       selectedGenres: [],
       selectedTags: [],
       selectedFormats: [],
@@ -446,7 +481,10 @@ export function Home({
     setUserLastUpdated(timestamps);
     setUserUpdatesBehind(updatesBehindMap);
     if (!opts?.preserveFilters) {
-      patch({ requiredUsers: results.map(r => r.username) });
+      patch({
+        requiredUsers: results.map(r => r.username),
+        excludedUsers: [],
+      });
     }
     setIsLoading(false);
     setProgressMessage('');
@@ -550,6 +588,9 @@ export function Home({
       .filter(item => {
         // Must be seen by EVERY user in requiredUsers
         const matchesUsers = requiredUsers.every(reqUser => !!item.userStatuses[reqUser]);
+
+        // Must NOT be on the list of ANY user in excludedUsers
+        const notExcluded = excludedUsers.every(excUser => !item.userStatuses[excUser]);
         
         // If genres are selected, must match at least one
         const matchesGenres = selectedGenres.length === 0 || 
@@ -570,10 +611,10 @@ export function Home({
         const matchesEpisodes = matchesMinEp && matchesMaxEp;
 
         // Format filter
-        const matchesFormat = selectedFormats.length === 0 ||
+        const matchesFormat = selectedFormats.length === 0 || 
           (item.format !== null && selectedFormats.includes(item.format));
 
-        return matchesUsers && matchesGenres && matchesTags && matchesYear && matchesEpisodes && matchesFormat;
+        return matchesUsers && notExcluded && matchesGenres && matchesTags && matchesYear && matchesEpisodes && matchesFormat;
       })
       .sort((a, b) => {
         switch (sortBy) {
@@ -587,7 +628,7 @@ export function Home({
             return a.title.toLowerCase().localeCompare(b.title.toLowerCase());
         }
       });
-  }, [cachedUserData, activeStatuses, requiredUsers, selectedGenres, selectedTags, minYear, maxYear, minEpisodes, maxEpisodes, selectedFormats, sortBy]);
+  }, [cachedUserData, activeStatuses, requiredUsers, excludedUsers, selectedGenres, selectedTags, minYear, maxYear, minEpisodes, maxEpisodes, selectedFormats, sortBy]);
 
   const copyToClipboard = () => {
     if (filteredResults.length === 0) return;
@@ -841,36 +882,99 @@ export function Home({
             </div>
 
             <div>
-              <h3 style={{ fontSize: '1rem', marginBottom: '0.8rem' }}>Required Contestants</h3>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.8rem' }}>
-                {cachedUserData.map(user => (
-                  <div key={user.username} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={requiredUsers.includes(user.username)}
-                        onChange={() => toggleRequiredUser(user.username)}
-                      />
-                      <span>{user.username}</span>
-                    </label>
-                    <a
-                      href={`https://anilist.co/user/${encodeURIComponent(user.username)}/`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title={`View ${user.username}'s AniList profile`}
+              <h3 style={{ fontSize: '1rem', marginBottom: '0.8rem' }}>Contestant Filtering</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                {cachedUserData.map(user => {
+                  const isReq = requiredUsers.includes(user.username);
+                  const isExc = excludedUsers.includes(user.username);
+                  const status = isReq ? 'include' : isExc ? 'exclude' : 'optional';
+
+                  return (
+                    <div
+                      key={user.username}
                       style={{
-                        fontSize: '0.75rem',
-                        color: 'var(--primary)',
-                        textDecoration: 'none',
-                        display: 'inline-flex',
+                        display: 'flex',
                         alignItems: 'center',
-                        opacity: 0.8
+                        justifyContent: 'space-between',
+                        padding: '6px 10px',
+                        background: 'var(--background)',
+                        borderRadius: '6px',
+                        border: `1px solid ${isReq ? 'var(--primary)' : isExc ? 'var(--accent)' : 'var(--gray-300)'}`,
+                        gap: '0.8rem'
                       }}
                     >
-                      ↗
-                    </a>
-                  </div>
-                ))}
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', minWidth: '100px' }}>
+                        <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{user.username}</span>
+                        <a
+                          href={`https://anilist.co/user/${encodeURIComponent(user.username)}/`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={`View ${user.username}'s AniList profile`}
+                          style={{
+                            fontSize: '0.75rem',
+                            color: 'var(--primary)',
+                            textDecoration: 'none',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            opacity: 0.8
+                          }}
+                        >
+                          ↗
+                        </a>
+                      </div>
+
+                      <div style={{ display: 'inline-flex', borderRadius: '4px', overflow: 'hidden', border: '1px solid var(--gray-300)' }}>
+                        <button
+                          type="button"
+                          onClick={() => setUserFilterState(user.username, status === 'include' ? 'optional' : 'include')}
+                          title={`Require ${user.username} to have watched the anime`}
+                          style={{
+                            padding: '4px 9px',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            background: isReq ? 'var(--primary)' : 'var(--gray-100)',
+                            color: isReq ? 'white' : 'var(--foreground)',
+                            borderRight: '1px solid var(--gray-300)',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          ✓ Require
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setUserFilterState(user.username, 'optional')}
+                          title={`${user.username} is optional`}
+                          style={{
+                            padding: '4px 9px',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            background: !isReq && !isExc ? 'var(--gray-300)' : 'var(--gray-100)',
+                            color: !isReq && !isExc ? 'var(--foreground)' : 'var(--gray-800)',
+                            borderRight: '1px solid var(--gray-300)',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Optional
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setUserFilterState(user.username, status === 'exclude' ? 'optional' : 'exclude')}
+                          title={`Exclude any anime on ${user.username}'s list`}
+                          style={{
+                            padding: '4px 9px',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            background: isExc ? 'var(--accent)' : 'var(--gray-100)',
+                            color: isExc ? 'white' : 'var(--foreground)',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          ✕ Exclude
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -1228,6 +1332,11 @@ export function Home({
                         {requiredUsers.includes(user.username) && (
                           <div style={{ fontSize: '0.6rem', color: 'var(--primary)', marginTop: '2px', fontWeight: 600 }}>
                             Required
+                          </div>
+                        )}
+                        {excludedUsers.includes(user.username) && (
+                          <div style={{ fontSize: '0.6rem', color: 'var(--accent)', marginTop: '2px', fontWeight: 600 }}>
+                            Excluded
                           </div>
                         )}
                       </th>
