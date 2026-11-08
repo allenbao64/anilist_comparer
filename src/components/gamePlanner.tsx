@@ -54,11 +54,36 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
     return cachedUserData.map(u => u.username);
   }, [cachedUserData]);
 
+  // If plan.plannerUsernames is defined and has valid names, use only those; otherwise default to all loadedUsernames
+  const activePlannerUsernames = useMemo(() => {
+    if (plan.plannerUsernames && plan.plannerUsernames.length > 0) {
+      const valid = plan.plannerUsernames.filter(u => loadedUsernames.includes(u));
+      if (valid.length > 0) return valid;
+    }
+    return loadedUsernames;
+  }, [plan.plannerUsernames, loadedUsernames]);
+
+  const togglePlannerUser = (username: string) => {
+    const current = activePlannerUsernames;
+    let next: string[];
+    if (current.includes(username)) {
+      // Don't let them remove below 2 players if possible
+      next = current.filter(u => u !== username);
+    } else {
+      next = [...current, username];
+    }
+    updatePlan({ plannerUsernames: next });
+  };
+
+  const selectAllPlannerUsers = () => {
+    updatePlan({ plannerUsernames: [...loadedUsernames] });
+  };
+
   // Compute all anime in the active pool from cachedUserData
-  // Rule: Candidate items must be seen by at least 2 contestants.
-  // Grouped into "EVERYONE" (seen by all loaded contestants) and "NO [User]" (unseen by exactly 1 contestant).
+  // Rule: Candidate items must be seen by at least 2 contestants in the active planner roster.
+  // Grouped into "EVERYONE" (seen by all active planner contestants) and "NO [User]" (unseen by exactly 1 planner contestant).
   const candidatePool = useMemo(() => {
-    if (loadedUsernames.length < 2) return [];
+    if (activePlannerUsernames.length < 2) return [];
 
     const animeMap = new Map<number, {
       id: number;
@@ -68,39 +93,41 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
       progressMap: Record<string, string>;
     }>();
 
-    // Collect all seen entries across loaded users
-    cachedUserData.forEach(user => {
-      session.activeStatuses.forEach(status => {
-        const list = user.statusData[status] || [];
-        list.forEach(entry => {
-          if (!animeMap.has(entry.id)) {
-            animeMap.set(entry.id, {
-              id: entry.id,
-              title: entry.title,
-              seenUsers: [],
-              unseenUsers: [],
-              progressMap: {},
-            });
-          }
-          const item = animeMap.get(entry.id)!;
-          if (!item.seenUsers.includes(user.username)) {
-            item.seenUsers.push(user.username);
-            if (entry.userProgress !== null && entry.userProgress !== undefined && status !== 'COMPLETED') {
-              item.progressMap[user.username] = `${entry.userProgress} eps`;
+    // Collect all seen entries across users in the planner roster
+    cachedUserData
+      .filter(user => activePlannerUsernames.includes(user.username))
+      .forEach(user => {
+        session.activeStatuses.forEach(status => {
+          const list = user.statusData[status] || [];
+          list.forEach(entry => {
+            if (!animeMap.has(entry.id)) {
+              animeMap.set(entry.id, {
+                id: entry.id,
+                title: entry.title,
+                seenUsers: [],
+                unseenUsers: [],
+                progressMap: {},
+              });
             }
-          }
+            const item = animeMap.get(entry.id)!;
+            if (!item.seenUsers.includes(user.username)) {
+              item.seenUsers.push(user.username);
+              if (entry.userProgress !== null && entry.userProgress !== undefined && status !== 'COMPLETED') {
+                item.progressMap[user.username] = `${entry.userProgress} eps`;
+              }
+            }
+          });
         });
       });
-    });
 
-    // Populate unseen users
+    // Populate unseen users (relative to activePlannerUsernames)
     const results: CandidateItem[] = [];
     animeMap.forEach(item => {
-      const unseen = loadedUsernames.filter(u => !item.seenUsers.includes(u));
+      const unseen = activePlannerUsernames.filter(u => !item.seenUsers.includes(u));
       item.unseenUsers = unseen;
 
       // Filter: Question must be theoretically answerable by at least 2 contestants
-      // So at least 2 people must have seen it!
+      // So at least 2 people in activePlannerUsernames must have seen it!
       if (item.seenUsers.length >= 2) {
         // Also limit pool to either EVERYONE or exactly 1 person has NOT seen it (matching planning doc)
         if (unseen.length <= 1) {
@@ -120,7 +147,7 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
     });
 
     return results.sort((a, b) => a.displayTitle.localeCompare(b.displayTitle));
-  }, [cachedUserData, loadedUsernames, session.activeStatuses, plan.titleOverrides]);
+  }, [cachedUserData, activePlannerUsernames, session.activeStatuses, plan.titleOverrides]);
 
   // Group candidate pool by column: EVERYONE, and NO [User]
   const columns = useMemo(() => {
@@ -132,7 +159,7 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
       },
     ];
 
-    loadedUsernames.forEach(username => {
+    activePlannerUsernames.forEach(username => {
       cols.push({
         key: username,
         label: `NO ${username.toUpperCase()}`,
@@ -141,12 +168,12 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
     });
 
     return cols;
-  }, [candidatePool, loadedUsernames]);
+  }, [candidatePool, activePlannerUsernames]);
 
   // Tally unfairness counter: Number of questions where each user has NOT seen the anime
   const unseenQuestionCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    loadedUsernames.forEach(u => { counts[u] = 0; });
+    activePlannerUsernames.forEach(u => { counts[u] = 0; });
 
     plan.questions.forEach(q => {
       q.unseenUsers.forEach(u => {
@@ -157,7 +184,7 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
     });
 
     return counts;
-  }, [loadedUsernames, plan.questions]);
+  }, [activePlannerUsernames, plan.questions]);
 
   // Candidate toggle crossed off
   const toggleCrossedOff = (animeId: number) => {
@@ -363,6 +390,62 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
 
       {isOpen && (
         <div style={{ background: 'var(--gray-100)', padding: '1.5rem', borderRadius: 'var(--border-radius)', border: '1px solid var(--gray-300)' }}>
+          {/* Active Contestants for Game Planner Selector */}
+          <div style={{ marginBottom: '1.5rem', background: 'var(--background)', padding: '1.2rem', borderRadius: '8px', border: '1px solid var(--gray-300)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.6rem', marginBottom: '0.6rem' }}>
+              <h3 style={{ fontSize: '1.05rem', color: 'var(--primary-dark)', margin: 0 }}>
+                🎮 Game Contestants ({activePlannerUsernames.length} of {loadedUsernames.length} active)
+              </h3>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                {activePlannerUsernames.length < loadedUsernames.length && (
+                  <button
+                    type="button"
+                    onClick={selectAllPlannerUsers}
+                    style={{ background: 'none', color: 'var(--primary)', fontSize: '0.8rem', textDecoration: 'underline', padding: 0 }}
+                  >
+                    Select All
+                  </button>
+                )}
+              </div>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: 'var(--gray-800)', marginBottom: '0.8rem' }}>
+              Select which players are competing in this specific game. The Candidate Pool and Fairness Tracker will calculate based only on these selected players:
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.8rem' }}>
+              {loadedUsernames.map(username => {
+                const isSelected = activePlannerUsernames.includes(username);
+                return (
+                  <label
+                    key={username}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.4rem',
+                      cursor: 'pointer',
+                      padding: '4px 10px',
+                      borderRadius: '16px',
+                      fontSize: '0.85rem',
+                      fontWeight: isSelected ? 600 : 'normal',
+                      background: isSelected ? 'var(--primary)' : 'var(--gray-200)',
+                      color: isSelected ? 'white' : 'var(--foreground)',
+                      border: `1px solid ${isSelected ? 'var(--primary)' : 'var(--gray-300)'}`,
+                      userSelect: 'none',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => togglePlannerUser(username)}
+                      style={{ cursor: 'pointer' }}
+                    />
+                    <span>{username}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Fairness Counters Banner */}
           <div style={{ marginBottom: '1.5rem', background: 'var(--background)', padding: '1.2rem', borderRadius: '8px', border: '1px solid var(--gray-300)' }}>
             <h3 style={{ fontSize: '1.05rem', marginBottom: '0.6rem', color: 'var(--primary-dark)' }}>
@@ -372,7 +455,7 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
               Shows how many questions in this game each person <strong>cannot answer</strong>. Keep these numbers balanced across all contestants:
             </p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem' }}>
-              {loadedUsernames.map(username => {
+              {activePlannerUsernames.map(username => {
                 const count = unseenQuestionCounts[username] || 0;
                 return (
                   <div
@@ -658,7 +741,7 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
                       )}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                         <span style={{ fontSize: '0.75rem', color: 'var(--gray-800)' }}>Cannot answer:</span>
-                        {loadedUsernames.map(username => {
+                        {activePlannerUsernames.map(username => {
                           const isUnseen = q.unseenUsers.includes(username);
                           return (
                             <button

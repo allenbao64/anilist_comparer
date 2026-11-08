@@ -12,6 +12,7 @@ export interface PlannedQuestion {
 }
 
 export interface SessionPlan {
+  plannerUsernames?: string[]; // Specific subset of players included in the game planner (if undefined/empty, defaults to all loaded users)
   questions: PlannedQuestion[];
   crossedOffAnimeIds: number[]; // Anime IDs marked as used/crossed off from the candidate pool
   titleOverrides: Record<number, string>; // Custom rename/grouping for an anime ID (e.g., 123 -> "AoT (S1 only)")
@@ -49,6 +50,7 @@ export function isValidSessionId(id: string): boolean {
 
 export function createDefaultPlan(): SessionPlan {
   return {
+    plannerUsernames: undefined,
     questions: [],
     crossedOffAnimeIds: [],
     titleOverrides: {},
@@ -118,7 +120,10 @@ function normalizePlan(raw: unknown): SessionPlan | undefined {
     }
   }
 
+  const plannerUsernames = asStringArray(p.plannerUsernames);
+
   return {
+    plannerUsernames,
     questions,
     crossedOffAnimeIds,
     titleOverrides,
