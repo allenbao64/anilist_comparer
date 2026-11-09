@@ -164,9 +164,11 @@ export default function SessionShell({ Workspace }: { Workspace: ComponentType<W
       fetchStatuses: [...source.fetchStatuses],
       activeStatuses: [...source.activeStatuses],
       requiredUsers: [...source.requiredUsers],
+      excludedUsers: [...(source.excludedUsers || [])],
       selectedGenres: [...source.selectedGenres],
       selectedTags: [...source.selectedTags],
       selectedFormats: [...source.selectedFormats],
+      includedAnimeIds: [...(source.includedAnimeIds || [])],
     });
     const insertAt = current.openIds.indexOf(id);
     const openIds = [...current.openIds];

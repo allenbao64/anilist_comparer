@@ -44,6 +44,7 @@ export interface GameSession {
   minYear: string;
   maxYear: string;
   sortBy: SessionSortBy;
+  includedAnimeIds?: number[]; // optional alternate summary planner state
   plan?: SessionPlan;
 }
 
@@ -87,6 +88,7 @@ export function createDefaultSession(overrides: Partial<GameSession> = {}): Game
     minYear: overrides.minYear ?? '',
     maxYear: overrides.maxYear ?? '',
     sortBy: overrides.sortBy ?? 'title',
+    includedAnimeIds: overrides.includedAnimeIds ? [...overrides.includedAnimeIds] : [],
     plan: overrides.plan ?? createDefaultPlan(),
   };
 }
@@ -192,6 +194,9 @@ export function normalizeSession(raw: unknown, fallbackId?: string): GameSession
     minYear: typeof data.minYear === 'string' ? data.minYear : undefined,
     maxYear: typeof data.maxYear === 'string' ? data.maxYear : undefined,
     sortBy,
+    includedAnimeIds: Array.isArray(data.includedAnimeIds)
+      ? data.includedAnimeIds.filter((n): n is number => typeof n === 'number')
+      : undefined,
     plan: normalizePlan(data.plan),
   });
 }

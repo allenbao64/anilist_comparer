@@ -94,6 +94,7 @@ export function Home({
   const [progressMessage, setProgressMessage] = useState<string>('');
   const [errors, setErrors] = useState<string[]>([]);
   const [showErrorDetails, setShowErrorDetails] = useState(false);
+  const [plannerMode, setPlannerMode] = useState<'current' | 'alternate'>('current');
   const abortLoadingRef = useRef(false);
 
   const {
@@ -264,6 +265,7 @@ export function Home({
       maxEpisodes: '',
       minYear: '',
       maxYear: '',
+      includedAnimeIds: [],
     });
     setCachedUserData([]);
     setErrors([]);
@@ -515,6 +517,17 @@ export function Home({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const includedAnimeIds = session.includedAnimeIds ?? [];
+
+  const toggleIncludedAnime = (id: number) => {
+    const isSelected = includedAnimeIds.includes(id);
+    onSessionChange({
+      includedAnimeIds: isSelected
+        ? includedAnimeIds.filter(existingId => existingId !== id)
+        : [...includedAnimeIds, id],
+    });
+  };
+
   const filteredResults = useMemo(() => {
     if (cachedUserData.length === 0) return [];
 
@@ -612,6 +625,17 @@ export function Home({
         }
       });
   }, [cachedUserData, activeStatuses, requiredUsers, excludedUsers, selectedGenres, selectedTags, minYear, maxYear, minEpisodes, maxEpisodes, selectedFormats, sortBy]);
+
+  const includedAnime = useMemo(() => {
+    const selected = new Set(includedAnimeIds);
+    return filteredResults.filter(anime => selected.has(anime.id));
+  }, [filteredResults, includedAnimeIds]);
+
+  const hiddenIncludedCount = useMemo(() => {
+    if (includedAnimeIds.length === 0) return 0;
+    const visibleIds = new Set(filteredResults.map(anime => anime.id));
+    return includedAnimeIds.filter(id => !visibleIds.has(id)).length;
+  }, [filteredResults, includedAnimeIds]);
 
   const copyToClipboard = () => {
     if (filteredResults.length === 0) return;
@@ -1377,6 +1401,24 @@ export function Home({
                           >
                             AniList ↗
                           </a>
+                          {plannerMode === 'alternate' && (
+                            <button
+                              type="button"
+                              onClick={() => toggleIncludedAnime(anime.id)}
+                              style={{
+                                fontSize: '0.72rem',
+                                padding: '2px 7px',
+                                borderRadius: '4px',
+                                border: '1px solid var(--gray-300)',
+                                background: includedAnimeIds.includes(anime.id) ? 'var(--primary)' : 'var(--gray-200)',
+                                color: includedAnimeIds.includes(anime.id) ? 'white' : 'var(--foreground)',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              {includedAnimeIds.includes(anime.id) ? '✓ In summary' : '+ Add summary'}
+                            </button>
+                          )}
                         </div>
                         <UntilFound
                           collapsed={!isExpanded}
@@ -1451,7 +1493,90 @@ export function Home({
         </section>
       )}
 
-      {cachedUserData.length > 0 && (
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.25rem', marginBottom: '0.5rem' }}>
+        <div style={{ display: 'inline-flex', background: 'var(--gray-200)', border: '1px solid var(--gray-300)', borderRadius: '999px', padding: '4px', gap: '4px' }}>
+          {(['current', 'alternate'] as const).map(mode => {
+            const isActive = plannerMode === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setPlannerMode(mode)}
+                style={{
+                  background: isActive ? 'var(--primary)' : 'transparent',
+                  color: isActive ? 'white' : 'var(--foreground)',
+                  border: 'none',
+                  borderRadius: '999px',
+                  padding: '6px 12px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                {mode === 'current' ? 'Current planner' : 'Game summary'}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {plannerMode === 'alternate' && (
+        <aside
+          style={{
+            background: 'var(--gray-100)',
+            border: '1px solid var(--gray-300)',
+            borderRadius: 'var(--border-radius)',
+            padding: '1rem',
+            marginBottom: '1.5rem',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', marginBottom: includedAnime.length === 0 ? 0 : '0.75rem' }}>
+            <h3 style={{ fontSize: '1rem', margin: 0 }}>Game summary</h3>
+            {includedAnime.length > 0 && (
+              <span style={{ fontSize: '0.85rem', color: 'var(--gray-800)' }}>
+                {includedAnime.length} selected
+                {hiddenIncludedCount > 0 && (
+                  <span> · {hiddenIncludedCount} hidden by current filters</span>
+                )}
+              </span>
+            )}
+            {includedAnimeIds.length > 0 && (
+              <button
+                type="button"
+                onClick={() => onSessionChange({ includedAnimeIds: [] })}
+                style={{ marginLeft: 'auto', background: 'none', color: 'var(--accent)', fontSize: '0.85rem', textDecoration: 'underline', padding: 0, cursor: 'pointer' }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {includedAnime.length === 0 ? (
+            <div style={{ fontSize: '0.85rem', color: 'var(--gray-800)', fontStyle: 'italic' }}>
+              No anime selected for the alternate summary yet.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem 1.25rem' }}>
+              {cachedUserData.map(user => {
+                const onList = includedAnime.filter(anime => !!anime.userStatuses[user.username]).length;
+                const pct = Math.round((onList / includedAnime.length) * 100);
+                return (
+                  <div key={user.username} style={{ flex: '1 1 180px', minWidth: '160px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', fontSize: '0.85rem' }}>
+                      <span style={{ fontWeight: 600 }}>{user.username}</span>
+                      <span style={{ whiteSpace: 'nowrap' }}>{onList} / {includedAnime.length} ({pct}%)</span>
+                    </div>
+                    <div style={{ marginTop: '4px', height: '8px', borderRadius: '999px', background: 'var(--gray-200)', overflow: 'hidden' }}>
+                      <div style={{ width: `${pct}%`, height: '100%', background: 'var(--primary)' }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </aside>
+      )}
+
+      {cachedUserData.length > 0 && plannerMode === 'current' && (
         <GamePlanner
           session={session}
           onSessionChange={onSessionChange}
