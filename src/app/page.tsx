@@ -1512,7 +1512,7 @@ export function Home({
                   cursor: 'pointer',
                 }}
               >
-                {mode === 'current' ? 'Current planner' : 'Game summary'}
+                {mode === 'current' ? 'v2' : 'v1'}
               </button>
             );
           })}
@@ -1530,7 +1530,7 @@ export function Home({
           }}
         >
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', marginBottom: includedAnime.length === 0 ? 0 : '0.75rem' }}>
-            <h3 style={{ fontSize: '1rem', margin: 0 }}>Game summary</h3>
+            <h3 style={{ fontSize: '1rem', margin: 0 }}>v1</h3>
             {includedAnime.length > 0 && (
               <span style={{ fontSize: '0.85rem', color: 'var(--gray-800)' }}>
                 {includedAnime.length} selected
