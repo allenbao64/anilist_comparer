@@ -31,7 +31,7 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
   const dragStartRef = useRef<{ y: number; h: number } | null>(null);
 
   // Per-column grouping mode; all columns stay open by default until the user closes them.
-  const [groupOpenColumns, setGroupOpenColumns] = useState<string[]>(() => ['everyone', ...loadedUsernames]);
+  const [groupOpenColumns, setGroupOpenColumns] = useState<string[]>(() => ['everyone', ...cachedUserData.map(u => u.username)]);
   const [selectedIdsForGroup, setSelectedIdsForGroup] = useState<number[]>([]);
   const [groupCustomName, setGroupCustomName] = useState('');
   
