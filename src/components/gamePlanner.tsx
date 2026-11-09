@@ -26,8 +26,12 @@ interface CandidateItem {
 export default function GamePlanner({ session, onSessionChange, cachedUserData }: GamePlannerProps) {
   const [isOpen, setIsOpen] = useState(false);
   
-  // Selection mode for grouping
-  const [isGroupMode, setIsGroupMode] = useState(false);
+  // Column height for resizable candidate pool
+  const [columnHeight, setColumnHeight] = useState(1170);
+  const dragStartRef = useRef<{ y: number; h: number } | null>(null);
+
+  // Per-column grouping mode (stores the column key that is in group mode, or null)
+  const [groupModeColKey, setGroupModeColKey] = useState<string | null>(null);
   const [selectedIdsForGroup, setSelectedIdsForGroup] = useState<number[]>([]);
   const [groupCustomName, setGroupCustomName] = useState('');
   
@@ -293,7 +297,7 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
 
     setSelectedIdsForGroup([]);
     setGroupCustomName('');
-    setIsGroupMode(false);
+    setGroupModeColKey(null);
   };
 
   // Disband / ungroup an anime group
@@ -596,141 +600,6 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
             </div>
           </div>
 
-          {/* Grouping Management Bar */}
-          <div style={{ marginBottom: '1.5rem', background: 'var(--background)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--gray-300)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.8rem' }}>
-              <div>
-                <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 'bold' }}>
-                  🔗 Group Seasons into Combined Series
-                </h4>
-                <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--gray-800)' }}>
-                  Merge multiple entries (e.g. <em>Railgun</em>, <em>Railgun S</em>, <em>Railgun T</em>) into a single combined entry.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsGroupMode(!isGroupMode);
-                  setSelectedIdsForGroup([]);
-                  setGroupCustomName('');
-                }}
-                style={{
-                  background: isGroupMode ? 'var(--accent)' : 'var(--primary)',
-                  color: 'white',
-                  padding: '6px 14px',
-                  fontSize: '0.85rem',
-                  fontWeight: 600,
-                  borderRadius: '4px',
-                }}
-              >
-                {isGroupMode ? '✕ Cancel Grouping' : '+ Combine / Group Anime'}
-              </button>
-            </div>
-
-            {/* Existing Groups List */}
-            {plan.groups && plan.groups.length > 0 && (
-              <div style={{ marginTop: '0.8rem', display: 'flex', flexWrap: 'wrap', gap: '0.6rem', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--gray-800)' }}>Active Groups:</span>
-                {plan.groups.map(g => (
-                  <span
-                    key={g.id}
-                    style={{
-                      background: 'var(--gray-200)',
-                      padding: '4px 10px',
-                      borderRadius: '12px',
-                      fontSize: '0.8rem',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      border: '1px solid var(--gray-300)',
-                    }}
-                  >
-                    <strong>{g.customTitle}</strong> ({g.animeIds.length} entries)
-                    <button
-                      type="button"
-                      onClick={() => handleUngroup(g.id)}
-                      title="Ungroup back into individual entries"
-                      style={{ background: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontWeight: 'bold', fontSize: '0.9rem' }}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {/* Create Group Form */}
-            {isGroupMode && (
-              <div style={{ marginTop: '1rem', padding: '1rem', background: 'var(--gray-100)', borderRadius: '6px', border: '1px solid var(--primary)' }}>
-                <div style={{ display: 'flex', gap: '0.8rem', flexWrap: 'wrap', marginBottom: '0.8rem' }}>
-                  <input
-                    type="text"
-                    placeholder="Combined series name (e.g. 'A Certain Scientific Railgun')..."
-                    value={groupCustomName}
-                    onChange={(e) => setGroupCustomName(e.target.value)}
-                    style={{ flex: 1, minWidth: '250px', padding: '6px 10px', fontSize: '0.85rem' }}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleCreateGroup}
-                    style={{
-                      background: 'var(--primary)',
-                      color: 'white',
-                      padding: '6px 16px',
-                      fontWeight: 600,
-                      fontSize: '0.85rem',
-                      borderRadius: '4px',
-                    }}
-                  >
-                    Combine Selected ({selectedIdsForGroup.length})
-                  </button>
-                </div>
-
-                <div style={{ fontSize: '0.8rem', color: 'var(--gray-800)', marginBottom: '0.6rem' }}>
-                  Check the anime below that belong to this series:
-                </div>
-
-                <div style={{ maxHeight: '180px', overflowY: 'auto', background: 'var(--background)', padding: '0.6rem', borderRadius: '4px', border: '1px solid var(--gray-300)', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '0.4rem' }}>
-                  {allUngroupedAnime.map(a => {
-                    const isChecked = selectedIdsForGroup.includes(a.id);
-                    return (
-                      <label
-                        key={a.id}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          fontSize: '0.8rem',
-                          cursor: 'pointer',
-                          padding: '2px 4px',
-                          borderRadius: '3px',
-                          background: isChecked ? 'rgba(61, 180, 242, 0.15)' : 'transparent',
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => {
-                            if (isChecked) {
-                              setSelectedIdsForGroup(selectedIdsForGroup.filter(id => id !== a.id));
-                            } else {
-                              setSelectedIdsForGroup([...selectedIdsForGroup, a.id]);
-                              if (!groupCustomName.trim()) {
-                                setGroupCustomName(a.title);
-                              }
-                            }
-                          }}
-                        />
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={a.title}>
-                          {a.title}
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
 
           {/* Section 1: Candidate Pool Table */}
           <div style={{ marginBottom: '2rem' }}>
@@ -743,104 +612,307 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
               </span>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${columns.length}, minmax(240px, 1fr))`, gap: '1rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
-              {columns.map(col => (
-                <div
-                  key={col.key}
-                  style={{
-                    background: 'var(--background)',
-                    borderRadius: '6px',
-                    border: '1px solid var(--gray-300)',
-                    padding: '0.8rem',
-                    maxHeight: '520px',
-                    overflowY: 'auto',
-                  }}
-                >
-                  <div style={{ fontWeight: 'bold', fontSize: '0.9rem', borderBottom: '2px solid var(--primary)', paddingBottom: '6px', marginBottom: '8px', color: 'var(--primary-dark)' }}>
-                    {col.label} ({col.items.length})
-                  </div>
-                  {col.items.length === 0 ? (
-                    <div style={{ fontSize: '0.8rem', color: 'var(--gray-800)', fontStyle: 'italic', padding: '8px 0' }}>None</div>
-                  ) : (
-                    <ol style={{ paddingLeft: '1.2rem', margin: 0, fontSize: '0.85rem' }}>
-                      {col.items.map(item => {
-                        const isCrossed = isCandidateCrossedOff(item);
+            {/* Shared resize drag handle — drag to change all column heights */}
+            <div
+              onMouseDown={(e) => {
+                dragStartRef.current = { y: e.clientY, h: columnHeight };
+                const onMove = (ev: MouseEvent) => {
+                  if (!dragStartRef.current) return;
+                  const delta = ev.clientY - dragStartRef.current.y;
+                  setColumnHeight(Math.max(200, dragStartRef.current.h + delta));
+                };
+                const onUp = () => {
+                  dragStartRef.current = null;
+                  window.removeEventListener('mousemove', onMove);
+                  window.removeEventListener('mouseup', onUp);
+                };
+                window.addEventListener('mousemove', onMove);
+                window.addEventListener('mouseup', onUp);
+              }}
+              style={{
+                height: '10px',
+                background: 'var(--gray-200)',
+                border: '1px solid var(--gray-300)',
+                borderRadius: '4px',
+                cursor: 'ns-resize',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: '0.5rem',
+                userSelect: 'none',
+              }}
+              title="Drag to resize column height"
+            >
+              <span style={{ fontSize: '0.6rem', color: 'var(--gray-800)', opacity: 0.6, letterSpacing: '2px' }}>⠿ drag to resize ⠿</span>
+            </div>
 
-                        return (
-                          <li
-                            key={item.id}
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${columns.length}, minmax(240px, 1fr))`, gap: '1rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
+              {columns.map(col => {
+                return (
+                  <div
+                    key={col.key}
+                    style={{
+                      background: 'var(--background)',
+                      borderRadius: '6px',
+                      border: '1px solid var(--gray-300)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      height: `${columnHeight}px`,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '0.8rem' }}>
+                      <div style={{ fontWeight: 'bold', fontSize: '0.9rem', borderBottom: '2px solid var(--primary)', paddingBottom: '6px', marginBottom: '8px', color: 'var(--primary-dark)' }}>
+                        {col.label} ({col.items.length})
+                      </div>
+                      {col.items.length === 0 ? (
+                        <div style={{ fontSize: '0.8rem', color: 'var(--gray-800)', fontStyle: 'italic', padding: '8px 0' }}>None</div>
+                      ) : (
+                        <ol style={{ paddingLeft: '1.2rem', margin: 0, fontSize: '0.85rem' }}>
+                          {col.items.map(item => {
+                            const isCrossed = isCandidateCrossedOff(item);
+
+                            return (
+                              <li
+                                key={item.id}
+                                style={{
+                                  marginBottom: '6px',
+                                  opacity: isCrossed ? 0.65 : 1,
+                                }}
+                              >
+                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                                  <span
+                                    onClick={() => toggleCandidateCrossedOff(item)}
+                                    style={{
+                                      cursor: 'pointer',
+                                      fontWeight: 500,
+                                      textDecoration: isCrossed ? 'line-through' : 'none',
+                                      textDecorationColor: isCrossed ? '#e53e3e' : undefined,
+                                      textDecorationThickness: isCrossed ? '2px' : undefined,
+                                      color: isCrossed ? 'var(--gray-800)' : 'inherit',
+                                    }}
+                                    title="Click to cross off / uncross"
+                                  >
+                                    {item.displayTitle}
+                                  </span>
+
+                                  {item.isGroup && (
+                                    <span
+                                      style={{
+                                        fontSize: '0.65rem',
+                                        background: 'var(--gray-200)',
+                                        padding: '1px 5px',
+                                        borderRadius: '8px',
+                                        color: 'var(--primary-dark)',
+                                        fontWeight: 600,
+                                      }}
+                                      title={`Combined group of ${item.animeIds.length} seasons`}
+                                    >
+                                      Group ({item.animeIds.length})
+                                    </span>
+                                  )}
+
+                                  {item.userProgressInfo && Object.entries(item.userProgressInfo).length > 0 && (
+                                    <span style={{ fontSize: '0.7rem', color: 'var(--accent)' }}>
+                                      ({Object.entries(item.userProgressInfo).map(([u, p]) => `${u} ${p}`).join(', ')})
+                                    </span>
+                                  )}
+
+                                  {item.isGroup && item.groupId && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleUngroup(item.groupId!);
+                                      }}
+                                      title="Ungroup this series back into individual entries"
+                                      style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        padding: '0 2px',
+                                        fontSize: '0.7rem',
+                                        cursor: 'pointer',
+                                        opacity: 0.6,
+                                      }}
+                                    >
+                                      🔓
+                                    </button>
+                                  )}
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ol>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${columns.length}, minmax(240px, 1fr))`, gap: '1rem', marginTop: '1rem' }}>
+              {columns.map(col => {
+                const groupedIdSet = new Set<number>();
+                (plan.groups || []).forEach(g => g.animeIds.forEach(id => groupedIdSet.add(id)));
+                const ungroupedForCol = col.items
+                  .filter(item => !item.isGroup)
+                  .flatMap(item => item.animeIds)
+                  .filter(id => !groupedIdSet.has(id))
+                  .map(id => rawAnimeMap.get(id))
+                  .filter((a): a is NonNullable<typeof a> => !!a)
+                  .sort((a, b) => a.title.localeCompare(b.title));
+                const groupsInThisCol = (plan.groups || []).filter(g =>
+                  col.items.some(item => item.isGroup && item.groupId === g.id)
+                );
+                const isColGroupMode = groupModeColKey === col.key;
+
+                return (
+                  <div
+                    key={`${col.key}-group-box`}
+                    style={{
+                      background: 'var(--gray-100)',
+                      border: '1px solid var(--gray-300)',
+                      borderRadius: '6px',
+                      padding: '0.75rem',
+                    }}
+                  >
+                    <div style={{ fontWeight: 'bold', fontSize: '0.82rem', color: 'var(--primary-dark)', marginBottom: '0.65rem' }}>
+                      {col.label} Groupings
+                    </div>
+
+                    {groupsInThisCol.length > 0 ? (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '0.75rem' }}>
+                        {groupsInThisCol.map(g => (
+                          <span
+                            key={g.id}
                             style={{
-                              marginBottom: '6px',
-                              opacity: isCrossed ? 0.65 : 1,
+                              background: 'var(--gray-200)',
+                              padding: '2px 8px',
+                              borderRadius: '10px',
+                              fontSize: '0.72rem',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              border: '1px solid var(--gray-300)',
                             }}
                           >
-                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-                              <span
-                                onClick={() => toggleCandidateCrossedOff(item)}
+                            <strong>{g.customTitle}</strong>
+                            <button
+                              type="button"
+                              onClick={() => handleUngroup(g.id)}
+                              title="Ungroup"
+                              style={{ background: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontWeight: 'bold', fontSize: '0.85rem', lineHeight: 1 }}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: '0.75rem', color: 'var(--gray-800)', marginBottom: '0.75rem', fontStyle: 'italic' }}>
+                        No groupings yet.
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isColGroupMode) {
+                          setGroupModeColKey(null);
+                          setSelectedIdsForGroup([]);
+                          setGroupCustomName('');
+                        } else {
+                          setGroupModeColKey(col.key);
+                          setSelectedIdsForGroup([]);
+                          setGroupCustomName('');
+                        }
+                      }}
+                      style={{
+                        background: isColGroupMode ? '#e53e3e' : 'var(--primary)',
+                        color: 'white',
+                        padding: '3px 10px',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        borderRadius: '4px',
+                        width: '100%',
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      {isColGroupMode ? '✕ Cancel' : '🔗 Group Seasons'}
+                    </button>
+
+                    {isColGroupMode && (
+                      <div>
+                        <div style={{ display: 'flex', gap: '4px', marginBottom: '5px' }}>
+                          <input
+                            type="text"
+                            placeholder="Series name..."
+                            value={groupCustomName}
+                            onChange={(e) => setGroupCustomName(e.target.value)}
+                            style={{ flex: 1, padding: '4px 6px', fontSize: '0.75rem', minWidth: 0 }}
+                          />
+                          <button
+                            type="button"
+                            onClick={handleCreateGroup}
+                            style={{
+                              background: 'var(--primary)',
+                              color: 'white',
+                              padding: '4px 8px',
+                              fontSize: '0.75rem',
+                              fontWeight: 600,
+                              borderRadius: '4px',
+                              flexShrink: 0,
+                            }}
+                          >
+                            Combine ({selectedIdsForGroup.length})
+                          </button>
+                        </div>
+                        <div style={{ maxHeight: '130px', overflowY: 'auto', background: 'var(--background)', padding: '4px', borderRadius: '4px', border: '1px solid var(--gray-300)' }}>
+                          {ungroupedForCol.length === 0 ? (
+                            <div style={{ fontSize: '0.75rem', color: 'var(--gray-800)', fontStyle: 'italic', padding: '4px' }}>No ungrouped entries in this column</div>
+                          ) : ungroupedForCol.map(a => {
+                            const isChecked = selectedIdsForGroup.includes(a.id);
+                            return (
+                              <label
+                                key={a.id}
                                 style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '5px',
+                                  fontSize: '0.75rem',
                                   cursor: 'pointer',
-                                  fontWeight: 500,
-                                  textDecoration: isCrossed ? 'line-through' : 'none',
-                                  textDecorationColor: isCrossed ? '#e53e3e' : undefined,
-                                  textDecorationThickness: isCrossed ? '2px' : undefined,
-                                  color: isCrossed ? 'var(--gray-800)' : 'inherit',
+                                  padding: '2px 3px',
+                                  borderRadius: '3px',
+                                  background: isChecked ? 'rgba(61, 180, 242, 0.15)' : 'transparent',
                                 }}
-                                title="Click to cross off / uncross"
                               >
-                                {item.displayTitle}
-                              </span>
-
-                              {item.isGroup && (
-                                <span
-                                  style={{
-                                    fontSize: '0.65rem',
-                                    background: 'var(--gray-200)',
-                                    padding: '1px 5px',
-                                    borderRadius: '8px',
-                                    color: 'var(--primary-dark)',
-                                    fontWeight: 600,
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => {
+                                    if (isChecked) {
+                                      setSelectedIdsForGroup(selectedIdsForGroup.filter(id => id !== a.id));
+                                    } else {
+                                      setSelectedIdsForGroup([...selectedIdsForGroup, a.id]);
+                                      if (!groupCustomName.trim()) {
+                                        setGroupCustomName(a.title);
+                                      }
+                                    }
                                   }}
-                                  title={`Combined group of ${item.animeIds.length} seasons`}
-                                >
-                                  Group ({item.animeIds.length})
+                                />
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={a.title}>
+                                  {a.title}
                                 </span>
-                              )}
-
-                              {item.userProgressInfo && Object.entries(item.userProgressInfo).length > 0 && (
-                                <span style={{ fontSize: '0.7rem', color: 'var(--accent)' }}>
-                                  ({Object.entries(item.userProgressInfo).map(([u, p]) => `${u} ${p}`).join(', ')})
-                                </span>
-                              )}
-
-                              {item.isGroup && item.groupId && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleUngroup(item.groupId!);
-                                  }}
-                                  title="Ungroup this series back into individual entries"
-                                  style={{
-                                    background: 'none',
-                                    border: 'none',
-                                    padding: '0 2px',
-                                    fontSize: '0.7rem',
-                                    cursor: 'pointer',
-                                    opacity: 0.6,
-                                  }}
-                                >
-                                  🔓
-                                </button>
-                              )}
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ol>
-                  )}
-                </div>
-              ))}
-            </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+           </div>
           </div>
 
           {/* Section 2: Questions List & Builder */}
