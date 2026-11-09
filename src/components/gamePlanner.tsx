@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import type { GameSession, PlannedQuestion, SessionPlan, AnimeGroup } from '@/types/session';
 import type { AnimeEntry, AnimeStatus, UserStatusData } from '@/utils/anilist';
 
@@ -30,8 +30,8 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
   const [columnHeight, setColumnHeight] = useState(1170);
   const dragStartRef = useRef<{ y: number; h: number } | null>(null);
 
-  // Per-column grouping mode (stores the column key that is in group mode, or null)
-  const [groupModeColKey, setGroupModeColKey] = useState<string | null>(null);
+  // Per-column grouping mode; all columns stay open by default until the user closes them.
+  const [groupOpenColumns, setGroupOpenColumns] = useState<string[]>(() => ['everyone', ...loadedUsernames]);
   const [selectedIdsForGroup, setSelectedIdsForGroup] = useState<number[]>([]);
   const [groupCustomName, setGroupCustomName] = useState('');
   
@@ -63,6 +63,14 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
   const loadedUsernames = useMemo(() => {
     return cachedUserData.map(u => u.username);
   }, [cachedUserData]);
+
+  useEffect(() => {
+    setGroupOpenColumns(prev => {
+      const valid = prev.filter(key => key === 'everyone' || loadedUsernames.includes(key));
+      if (valid.length > 0) return valid;
+      return ['everyone', ...loadedUsernames];
+    });
+  }, [loadedUsernames]);
 
   // If plan.plannerUsernames is defined and has valid names, use only those; otherwise default to all loadedUsernames
   const activePlannerUsernames = useMemo(() => {
@@ -297,7 +305,6 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
 
     setSelectedIdsForGroup([]);
     setGroupCustomName('');
-    setGroupModeColKey(null);
   };
 
   // Disband / ungroup an anime group
@@ -612,40 +619,6 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
               </span>
             </div>
 
-            {/* Shared resize drag handle — drag to change all column heights */}
-            <div
-              onMouseDown={(e) => {
-                dragStartRef.current = { y: e.clientY, h: columnHeight };
-                const onMove = (ev: MouseEvent) => {
-                  if (!dragStartRef.current) return;
-                  const delta = ev.clientY - dragStartRef.current.y;
-                  setColumnHeight(Math.max(200, dragStartRef.current.h + delta));
-                };
-                const onUp = () => {
-                  dragStartRef.current = null;
-                  window.removeEventListener('mousemove', onMove);
-                  window.removeEventListener('mouseup', onUp);
-                };
-                window.addEventListener('mousemove', onMove);
-                window.addEventListener('mouseup', onUp);
-              }}
-              style={{
-                height: '10px',
-                background: 'var(--gray-200)',
-                border: '1px solid var(--gray-300)',
-                borderRadius: '4px',
-                cursor: 'ns-resize',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginBottom: '0.5rem',
-                userSelect: 'none',
-              }}
-              title="Drag to resize column height"
-            >
-              <span style={{ fontSize: '0.6rem', color: 'var(--gray-800)', opacity: 0.6, letterSpacing: '2px' }}>⠿ drag to resize ⠿</span>
-            </div>
-
             <div style={{ display: 'grid', gridTemplateColumns: `repeat(${columns.length}, minmax(240px, 1fr))`, gap: '1rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
               {columns.map(col => {
                 return (
@@ -745,6 +718,36 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
                         </ol>
                       )}
                     </div>
+                    <div
+                      onMouseDown={(e) => {
+                        dragStartRef.current = { y: e.clientY, h: columnHeight };
+                        const onMove = (ev: MouseEvent) => {
+                          if (!dragStartRef.current) return;
+                          const delta = ev.clientY - dragStartRef.current.y;
+                          setColumnHeight(Math.max(200, dragStartRef.current.h + delta));
+                        };
+                        const onUp = () => {
+                          dragStartRef.current = null;
+                          window.removeEventListener('mousemove', onMove);
+                          window.removeEventListener('mouseup', onUp);
+                        };
+                        window.addEventListener('mousemove', onMove);
+                        window.addEventListener('mouseup', onUp);
+                      }}
+                      style={{
+                        height: '12px',
+                        background: 'var(--gray-200)',
+                        borderTop: '1px solid var(--gray-300)',
+                        cursor: 'ns-resize',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        userSelect: 'none',
+                      }}
+                      title="Drag to resize column height"
+                    >
+                      <span style={{ fontSize: '0.55rem', color: 'var(--gray-800)', opacity: 0.7, letterSpacing: '2px' }}>⠿</span>
+                    </div>
                   </div>
                 );
               })}
@@ -764,7 +767,7 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
                 const groupsInThisCol = (plan.groups || []).filter(g =>
                   col.items.some(item => item.isGroup && item.groupId === g.id)
                 );
-                const isColGroupMode = groupModeColKey === col.key;
+                const isColGroupMode = groupOpenColumns.includes(col.key);
 
                 return (
                   <div
@@ -817,15 +820,13 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
                     <button
                       type="button"
                       onClick={() => {
-                        if (isColGroupMode) {
-                          setGroupModeColKey(null);
-                          setSelectedIdsForGroup([]);
-                          setGroupCustomName('');
-                        } else {
-                          setGroupModeColKey(col.key);
-                          setSelectedIdsForGroup([]);
-                          setGroupCustomName('');
-                        }
+                        setGroupOpenColumns(current =>
+                          current.includes(col.key)
+                            ? current.filter(key => key !== col.key)
+                            : [...current, col.key]
+                        );
+                        setSelectedIdsForGroup([]);
+                        setGroupCustomName('');
                       }}
                       style={{
                         background: isColGroupMode ? '#e53e3e' : 'var(--primary)',
