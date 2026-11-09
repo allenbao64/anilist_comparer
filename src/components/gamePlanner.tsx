@@ -1,9 +1,8 @@
 'use client';
 
 import { useState, useMemo, useRef } from 'react';
-import type { GameSession, PlannedQuestion, SessionPlan } from '@/types/session';
+import type { GameSession, PlannedQuestion, SessionPlan, AnimeGroup } from '@/types/session';
 import type { AnimeEntry, AnimeStatus, UserStatusData } from '@/utils/anilist';
-import { simplifyFranchiseTitle } from '@/utils/seriesGrouping';
 
 interface GamePlannerProps {
   session: GameSession;
@@ -12,32 +11,39 @@ interface GamePlannerProps {
 }
 
 interface CandidateItem {
-  id: number;
-  originalTitle: string;
+  id: string; // "anime-{id}" or "grp-{id}"
+  animeIds: number[];
+  groupId?: string;
+  originalTitles: string[];
   displayTitle: string;
   seenUsers: string[];
   unseenUsers: string[];
   isEveryone: boolean;
   userProgressInfo?: Record<string, string>;
+  isGroup: boolean;
 }
 
 export default function GamePlanner({ session, onSessionChange, cachedUserData }: GamePlannerProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [editingTitleId, setEditingTitleId] = useState<number | null>(null);
-  const [titleDraft, setTitleDraft] = useState('');
+  
+  // Selection mode for grouping
+  const [isGroupMode, setIsGroupMode] = useState(false);
+  const [selectedIdsForGroup, setSelectedIdsForGroup] = useState<number[]>([]);
+  const [groupCustomName, setGroupCustomName] = useState('');
   
   // Question creation state
   const [newQuestionText, setNewQuestionText] = useState('');
   const [newQuestionAnimeSearch, setNewQuestionAnimeSearch] = useState('');
-  const [selectedAnimeForNewQ, setSelectedAnimeForNewQ] = useState<CandidateItem[]>([]);
+  const [selectedCandidatesForNewQ, setSelectedCandidatesForNewQ] = useState<CandidateItem[]>([]);
   const [manualUnseenUsers, setManualUnseenUsers] = useState<string[]>([]);
-  const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const plan: SessionPlan = session.plan || {
     questions: [],
     crossedOffAnimeIds: [],
+    crossedOffGroupIds: [],
+    groups: [],
     titleOverrides: {},
   };
 
@@ -67,7 +73,6 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
     const current = activePlannerUsernames;
     let next: string[];
     if (current.includes(username)) {
-      // Don't let them remove below 2 players if possible
       next = current.filter(u => u !== username);
     } else {
       next = [...current, username];
@@ -79,37 +84,30 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
     updatePlan({ plannerUsernames: [...loadedUsernames] });
   };
 
-  // Compute all anime in the active pool from cachedUserData
-  // Rule: Candidate items must be seen by at least 2 contestants in the active planner roster.
-  // Grouped into "EVERYONE" (seen by all active planner contestants) and "NO [User]" (unseen by exactly 1 planner contestant).
-  const candidatePool = useMemo(() => {
-    if (activePlannerUsernames.length < 2) return [];
-
-    const animeMap = new Map<number, {
+  // Build a lookup of anime by id from cachedUserData
+  const rawAnimeMap = useMemo(() => {
+    const map = new Map<number, {
       id: number;
       title: string;
       seenUsers: string[];
-      unseenUsers: string[];
       progressMap: Record<string, string>;
     }>();
 
-    // Collect all seen entries across users in the planner roster
     cachedUserData
       .filter(user => activePlannerUsernames.includes(user.username))
       .forEach(user => {
         session.activeStatuses.forEach(status => {
           const list = user.statusData[status] || [];
           list.forEach(entry => {
-            if (!animeMap.has(entry.id)) {
-              animeMap.set(entry.id, {
+            if (!map.has(entry.id)) {
+              map.set(entry.id, {
                 id: entry.id,
                 title: entry.title,
                 seenUsers: [],
-                unseenUsers: [],
                 progressMap: {},
               });
             }
-            const item = animeMap.get(entry.id)!;
+            const item = map.get(entry.id)!;
             if (!item.seenUsers.includes(user.username)) {
               item.seenUsers.push(user.username);
               if (entry.userProgress !== null && entry.userProgress !== undefined && status !== 'COMPLETED') {
@@ -120,34 +118,81 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
         });
       });
 
-    // Populate unseen users (relative to activePlannerUsernames)
-    const results: CandidateItem[] = [];
-    animeMap.forEach(item => {
-      const unseen = activePlannerUsernames.filter(u => !item.seenUsers.includes(u));
-      item.unseenUsers = unseen;
+    return map;
+  }, [cachedUserData, activePlannerUsernames, session.activeStatuses]);
 
-      // Filter: Question must be theoretically answerable by at least 2 contestants
-      // So at least 2 people in activePlannerUsernames must have seen it!
-      if (item.seenUsers.length >= 2) {
-        // Also limit pool to either EVERYONE or exactly 1 person has NOT seen it (matching planning doc)
-        if (unseen.length <= 1) {
-          const override = plan.titleOverrides[item.id];
-          const displayTitle = override || simplifyFranchiseTitle(item.title);
-          results.push({
-            id: item.id,
-            originalTitle: item.title,
-            displayTitle,
-            seenUsers: item.seenUsers,
-            unseenUsers: unseen,
-            isEveryone: unseen.length === 0,
-            userProgressInfo: item.progressMap,
+  // Compute all anime / merged groups in the candidate pool
+  const candidatePool = useMemo(() => {
+    if (activePlannerUsernames.length < 2) return [];
+
+    const groups = plan.groups || [];
+    const groupedAnimeIdSet = new Set<number>();
+    groups.forEach(g => {
+      g.animeIds.forEach(id => groupedAnimeIdSet.add(id));
+    });
+
+    const results: CandidateItem[] = [];
+
+    // 1. Process custom groups first
+    groups.forEach(group => {
+      const seenSet = new Set<string>();
+      const combinedProgress: Record<string, string> = {};
+      const titles: string[] = [];
+
+      group.animeIds.forEach(id => {
+        const item = rawAnimeMap.get(id);
+        if (item) {
+          titles.push(item.title);
+          item.seenUsers.forEach(u => seenSet.add(u));
+          Object.entries(item.progressMap).forEach(([u, p]) => {
+            combinedProgress[u] = p;
           });
         }
+      });
+
+      const seenUsers = Array.from(seenSet);
+      const unseenUsers = activePlannerUsernames.filter(u => !seenSet.has(u));
+
+      if (seenUsers.length >= 2 && unseenUsers.length <= 1) {
+        results.push({
+          id: group.id,
+          animeIds: group.animeIds,
+          groupId: group.id,
+          originalTitles: titles,
+          displayTitle: group.customTitle,
+          seenUsers,
+          unseenUsers,
+          isEveryone: unseenUsers.length === 0,
+          userProgressInfo: combinedProgress,
+          isGroup: true,
+        });
+      }
+    });
+
+    // 2. Process non-grouped individual anime
+    rawAnimeMap.forEach(item => {
+      if (groupedAnimeIdSet.has(item.id)) return; // Part of a merged group already
+
+      const unseen = activePlannerUsernames.filter(u => !item.seenUsers.includes(u));
+
+      if (item.seenUsers.length >= 2 && unseen.length <= 1) {
+        const override = plan.titleOverrides[item.id];
+        results.push({
+          id: `anime-${item.id}`,
+          animeIds: [item.id],
+          originalTitles: [item.title],
+          displayTitle: override || item.title,
+          seenUsers: item.seenUsers,
+          unseenUsers: unseen,
+          isEveryone: unseen.length === 0,
+          userProgressInfo: item.progressMap,
+          isGroup: false,
+        });
       }
     });
 
     return results.sort((a, b) => a.displayTitle.localeCompare(b.displayTitle));
-  }, [cachedUserData, activePlannerUsernames, session.activeStatuses, plan.titleOverrides]);
+  }, [rawAnimeMap, activePlannerUsernames, plan.groups, plan.titleOverrides]);
 
   // Group candidate pool by column: EVERYONE, and NO [User]
   const columns = useMemo(() => {
@@ -170,7 +215,7 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
     return cols;
   }, [candidatePool, activePlannerUsernames]);
 
-  // Tally unfairness counter: Number of questions where each user has NOT seen the anime
+  // Tally unfairness counter
   const unseenQuestionCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     activePlannerUsernames.forEach(u => { counts[u] = 0; });
@@ -186,71 +231,132 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
     return counts;
   }, [activePlannerUsernames, plan.questions]);
 
-  // Candidate toggle crossed off
-  const toggleCrossedOff = (animeId: number) => {
-    const isCrossed = plan.crossedOffAnimeIds.includes(animeId);
-    const nextCrossed = isCrossed
-      ? plan.crossedOffAnimeIds.filter(id => id !== animeId)
-      : [...plan.crossedOffAnimeIds, animeId];
-    updatePlan({ crossedOffAnimeIds: nextCrossed });
+  // Check if candidate item is crossed off
+  const isCandidateCrossedOff = (candidate: CandidateItem) => {
+    if (candidate.isGroup && candidate.groupId) {
+      if (plan.crossedOffGroupIds?.includes(candidate.groupId)) return true;
+      return candidate.animeIds.some(id => plan.crossedOffAnimeIds.includes(id));
+    }
+    return candidate.animeIds.some(id => plan.crossedOffAnimeIds.includes(id));
   };
 
-  // Title override save
-  const saveTitleOverride = (animeId: number) => {
-    const clean = titleDraft.trim();
-    const nextOverrides = { ...plan.titleOverrides };
-    if (!clean) {
-      delete nextOverrides[animeId];
+  // Toggle crossed off for candidate item
+  const toggleCandidateCrossedOff = (candidate: CandidateItem) => {
+    const isCurrentlyCrossed = isCandidateCrossedOff(candidate);
+
+    if (candidate.isGroup && candidate.groupId) {
+      const currentGroupCrossed = plan.crossedOffGroupIds || [];
+      const nextGroupCrossed = isCurrentlyCrossed
+        ? currentGroupCrossed.filter(gid => gid !== candidate.groupId)
+        : [...currentGroupCrossed, candidate.groupId];
+
+      const currentAnimeCrossed = plan.crossedOffAnimeIds || [];
+      const nextAnimeCrossed = isCurrentlyCrossed
+        ? currentAnimeCrossed.filter(id => !candidate.animeIds.includes(id))
+        : Array.from(new Set([...currentAnimeCrossed, ...candidate.animeIds]));
+
+      updatePlan({
+        crossedOffGroupIds: nextGroupCrossed,
+        crossedOffAnimeIds: nextAnimeCrossed,
+      });
     } else {
-      nextOverrides[animeId] = clean;
+      const animeId = candidate.animeIds[0];
+      const currentCrossed = plan.crossedOffAnimeIds || [];
+      const nextCrossed = isCurrentlyCrossed
+        ? currentCrossed.filter(id => id !== animeId)
+        : [...currentCrossed, animeId];
+      updatePlan({ crossedOffAnimeIds: nextCrossed });
     }
-    updatePlan({ titleOverrides: nextOverrides });
-    setEditingTitleId(null);
-    setTitleDraft('');
+  };
+
+  // Create combined anime group
+  const handleCreateGroup = () => {
+    if (selectedIdsForGroup.length < 2) {
+      alert('Please select at least 2 anime entries to group together.');
+      return;
+    }
+    const name = groupCustomName.trim();
+    if (!name) {
+      alert('Please provide a name for this combined entry.');
+      return;
+    }
+
+    const newGroup: AnimeGroup = {
+      id: `grp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      customTitle: name,
+      animeIds: [...selectedIdsForGroup],
+    };
+
+    updatePlan({
+      groups: [...(plan.groups || []), newGroup],
+    });
+
+    setSelectedIdsForGroup([]);
+    setGroupCustomName('');
+    setIsGroupMode(false);
+  };
+
+  // Disband / ungroup an anime group
+  const handleUngroup = (groupId: string) => {
+    const nextGroups = (plan.groups || []).filter(g => g.id !== groupId);
+    const nextGroupCrossed = (plan.crossedOffGroupIds || []).filter(gid => gid !== groupId);
+    updatePlan({
+      groups: nextGroups,
+      crossedOffGroupIds: nextGroupCrossed,
+    });
   };
 
   // Add question
   const handleAddQuestion = () => {
-    if (!newQuestionText.trim() && selectedAnimeForNewQ.length === 0) return;
+    if (!newQuestionText.trim() && selectedCandidatesForNewQ.length === 0) return;
 
-    // Automatically compute unseen users from the selected anime
+    const allAnimeIds: number[] = [];
+    const allTitles: string[] = [];
     const unionUnseen = new Set<string>(manualUnseenUsers);
-    selectedAnimeForNewQ.forEach(anime => {
-      anime.unseenUsers.forEach(u => unionUnseen.add(u));
+
+    selectedCandidatesForNewQ.forEach(candidate => {
+      candidate.animeIds.forEach(id => allAnimeIds.push(id));
+      allTitles.push(candidate.displayTitle);
+      candidate.unseenUsers.forEach(u => unionUnseen.add(u));
     });
 
     const newQ: PlannedQuestion = {
       id: crypto.randomUUID(),
       text: newQuestionText.trim() || `Question ${plan.questions.length + 1}`,
-      animeIds: selectedAnimeForNewQ.map(a => a.id),
-      animeTitles: selectedAnimeForNewQ.map(a => a.displayTitle),
+      animeIds: allAnimeIds,
+      animeTitles: allTitles,
       unseenUsers: Array.from(unionUnseen),
     };
 
-    // Automatically cross off the anime used in this question
-    const newlyCrossed = new Set(plan.crossedOffAnimeIds);
-    selectedAnimeForNewQ.forEach(a => newlyCrossed.add(a.id));
+    // Cross off the items used
+    const newlyCrossedAnime = new Set(plan.crossedOffAnimeIds);
+    const newlyCrossedGroups = new Set(plan.crossedOffGroupIds || []);
+
+    selectedCandidatesForNewQ.forEach(candidate => {
+      candidate.animeIds.forEach(id => newlyCrossedAnime.add(id));
+      if (candidate.isGroup && candidate.groupId) {
+        newlyCrossedGroups.add(candidate.groupId);
+      }
+    });
 
     updatePlan({
       questions: [...plan.questions, newQ],
-      crossedOffAnimeIds: Array.from(newlyCrossed),
+      crossedOffAnimeIds: Array.from(newlyCrossedAnime),
+      crossedOffGroupIds: Array.from(newlyCrossedGroups),
     });
 
-    // Reset inputs
     setNewQuestionText('');
-    setSelectedAnimeForNewQ([]);
+    setSelectedCandidatesForNewQ([]);
     setManualUnseenUsers([]);
     setNewQuestionAnimeSearch('');
   };
 
-  // Delete question
   const handleDeleteQuestion = (questionId: string) => {
     updatePlan({
       questions: plan.questions.filter(q => q.id !== questionId),
     });
   };
 
-  // Toggle unseen user manually on a question
   const toggleQuestionUnseenUser = (questionId: string, username: string) => {
     const nextQuestions = plan.questions.map(q => {
       if (q.id !== questionId) return q;
@@ -263,10 +369,9 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
     updatePlan({ questions: nextQuestions });
   };
 
-  // Export JSON
   const exportPlanJson = () => {
     const data = {
-      version: '1.0',
+      version: '2.0',
       sessionId: session.id,
       sessionName: session.name,
       usernames: session.usernames,
@@ -282,7 +387,6 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
     URL.revokeObjectURL(url);
   };
 
-  // Import JSON
   const handleImportJson = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -294,8 +398,11 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
         const importedPlan = raw.plan || raw;
         if (Array.isArray(importedPlan.questions)) {
           updatePlan({
+            plannerUsernames: Array.isArray(importedPlan.plannerUsernames) ? importedPlan.plannerUsernames : undefined,
             questions: importedPlan.questions,
             crossedOffAnimeIds: Array.isArray(importedPlan.crossedOffAnimeIds) ? importedPlan.crossedOffAnimeIds : [],
+            crossedOffGroupIds: Array.isArray(importedPlan.crossedOffGroupIds) ? importedPlan.crossedOffGroupIds : [],
+            groups: Array.isArray(importedPlan.groups) ? importedPlan.groups : [],
             titleOverrides: typeof importedPlan.titleOverrides === 'object' ? importedPlan.titleOverrides : {},
           });
         }
@@ -307,14 +414,23 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // Search suggestions for anime to attach to new question
+  // Search candidate suggestions for question builder
   const filteredSearchCandidates = useMemo(() => {
     if (!newQuestionAnimeSearch.trim()) return [];
     const q = newQuestionAnimeSearch.toLowerCase();
     return candidatePool
-      .filter(c => c.displayTitle.toLowerCase().includes(q) || c.originalTitle.toLowerCase().includes(q))
-      .slice(0, 8);
+      .filter(c => c.displayTitle.toLowerCase().includes(q) || c.originalTitles.some(t => t.toLowerCase().includes(q)))
+      .slice(0, 10);
   }, [newQuestionAnimeSearch, candidatePool]);
+
+  // All individual anime available to select for grouping
+  const allUngroupedAnime = useMemo(() => {
+    const groupedIdSet = new Set<number>();
+    (plan.groups || []).forEach(g => g.animeIds.forEach(id => groupedIdSet.add(id)));
+    return Array.from(rawAnimeMap.values())
+      .filter(item => !groupedIdSet.has(item.id))
+      .sort((a, b) => a.title.localeCompare(b.title));
+  }, [rawAnimeMap, plan.groups]);
 
   return (
     <div style={{ marginTop: '2.5rem', borderTop: '2px solid var(--gray-300)', paddingTop: '1.5rem' }}>
@@ -480,18 +596,154 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
             </div>
           </div>
 
-          {/* Section 1: Candidate Pool Table (Like Google Doc) */}
+          {/* Grouping Management Bar */}
+          <div style={{ marginBottom: '1.5rem', background: 'var(--background)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--gray-300)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.8rem' }}>
+              <div>
+                <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 'bold' }}>
+                  🔗 Group Seasons into Combined Series
+                </h4>
+                <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--gray-800)' }}>
+                  Merge multiple entries (e.g. <em>Railgun</em>, <em>Railgun S</em>, <em>Railgun T</em>) into a single combined entry.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsGroupMode(!isGroupMode);
+                  setSelectedIdsForGroup([]);
+                  setGroupCustomName('');
+                }}
+                style={{
+                  background: isGroupMode ? 'var(--accent)' : 'var(--primary)',
+                  color: 'white',
+                  padding: '6px 14px',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  borderRadius: '4px',
+                }}
+              >
+                {isGroupMode ? '✕ Cancel Grouping' : '+ Combine / Group Anime'}
+              </button>
+            </div>
+
+            {/* Existing Groups List */}
+            {plan.groups && plan.groups.length > 0 && (
+              <div style={{ marginTop: '0.8rem', display: 'flex', flexWrap: 'wrap', gap: '0.6rem', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--gray-800)' }}>Active Groups:</span>
+                {plan.groups.map(g => (
+                  <span
+                    key={g.id}
+                    style={{
+                      background: 'var(--gray-200)',
+                      padding: '4px 10px',
+                      borderRadius: '12px',
+                      fontSize: '0.8rem',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      border: '1px solid var(--gray-300)',
+                    }}
+                  >
+                    <strong>{g.customTitle}</strong> ({g.animeIds.length} entries)
+                    <button
+                      type="button"
+                      onClick={() => handleUngroup(g.id)}
+                      title="Ungroup back into individual entries"
+                      style={{ background: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontWeight: 'bold', fontSize: '0.9rem' }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Create Group Form */}
+            {isGroupMode && (
+              <div style={{ marginTop: '1rem', padding: '1rem', background: 'var(--gray-100)', borderRadius: '6px', border: '1px solid var(--primary)' }}>
+                <div style={{ display: 'flex', gap: '0.8rem', flexWrap: 'wrap', marginBottom: '0.8rem' }}>
+                  <input
+                    type="text"
+                    placeholder="Combined series name (e.g. 'A Certain Scientific Railgun')..."
+                    value={groupCustomName}
+                    onChange={(e) => setGroupCustomName(e.target.value)}
+                    style={{ flex: 1, minWidth: '250px', padding: '6px 10px', fontSize: '0.85rem' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCreateGroup}
+                    style={{
+                      background: 'var(--primary)',
+                      color: 'white',
+                      padding: '6px 16px',
+                      fontWeight: 600,
+                      fontSize: '0.85rem',
+                      borderRadius: '4px',
+                    }}
+                  >
+                    Combine Selected ({selectedIdsForGroup.length})
+                  </button>
+                </div>
+
+                <div style={{ fontSize: '0.8rem', color: 'var(--gray-800)', marginBottom: '0.6rem' }}>
+                  Check the anime below that belong to this series:
+                </div>
+
+                <div style={{ maxHeight: '180px', overflowY: 'auto', background: 'var(--background)', padding: '0.6rem', borderRadius: '4px', border: '1px solid var(--gray-300)', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '0.4rem' }}>
+                  {allUngroupedAnime.map(a => {
+                    const isChecked = selectedIdsForGroup.includes(a.id);
+                    return (
+                      <label
+                        key={a.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          fontSize: '0.8rem',
+                          cursor: 'pointer',
+                          padding: '2px 4px',
+                          borderRadius: '3px',
+                          background: isChecked ? 'rgba(61, 180, 242, 0.15)' : 'transparent',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => {
+                            if (isChecked) {
+                              setSelectedIdsForGroup(selectedIdsForGroup.filter(id => id !== a.id));
+                            } else {
+                              setSelectedIdsForGroup([...selectedIdsForGroup, a.id]);
+                              if (!groupCustomName.trim()) {
+                                setGroupCustomName(a.title);
+                              }
+                            }
+                          }}
+                        />
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={a.title}>
+                          {a.title}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Section 1: Candidate Pool Table */}
           <div style={{ marginBottom: '2rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.8rem' }}>
               <h3 style={{ fontSize: '1rem', fontWeight: 'bold' }}>
                 📋 Candidate Anime Pool (Answerable by ≥ 2 Contestants)
               </h3>
               <span style={{ fontSize: '0.8rem', color: 'var(--gray-800)' }}>
-                Click an anime to cross it off as used. Click ✏️ to rename or group seasons into a series.
+                Click an anime to cross it off (red strikethrough). Grouped entries count as 1.
               </span>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${columns.length}, minmax(220px, 1fr))`, gap: '1rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${columns.length}, minmax(240px, 1fr))`, gap: '1rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
               {columns.map(col => (
                 <div
                   key={col.key}
@@ -500,7 +752,7 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
                     borderRadius: '6px',
                     border: '1px solid var(--gray-300)',
                     padding: '0.8rem',
-                    maxHeight: '480px',
+                    maxHeight: '520px',
                     overflowY: 'auto',
                   }}
                 >
@@ -512,62 +764,62 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
                   ) : (
                     <ol style={{ paddingLeft: '1.2rem', margin: 0, fontSize: '0.85rem' }}>
                       {col.items.map(item => {
-                        const isCrossed = plan.crossedOffAnimeIds.includes(item.id);
-                        const isEditing = editingTitleId === item.id;
+                        const isCrossed = isCandidateCrossedOff(item);
 
                         return (
                           <li
                             key={item.id}
                             style={{
                               marginBottom: '6px',
-                              textDecoration: isCrossed ? 'line-through' : 'none',
-                              opacity: isCrossed ? 0.45 : 1,
+                              opacity: isCrossed ? 0.65 : 1,
                             }}
                           >
-                            {isEditing ? (
-                              <div style={{ display: 'flex', gap: '4px', marginTop: '2px' }}>
-                                <input
-                                  type="text"
-                                  value={titleDraft}
-                                  onChange={(e) => setTitleDraft(e.target.value)}
-                                  placeholder="Series display name..."
-                                  style={{ width: '100%', padding: '2px 4px', fontSize: '0.8rem' }}
-                                  autoFocus
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') saveTitleOverride(item.id);
-                                    if (e.key === 'Escape') setEditingTitleId(null);
-                                  }}
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => saveTitleOverride(item.id)}
-                                  style={{ padding: '2px 6px', fontSize: '0.75rem', background: 'var(--primary)', color: 'white' }}
-                                >
-                                  Save
-                                </button>
-                              </div>
-                            ) : (
-                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                              <span
+                                onClick={() => toggleCandidateCrossedOff(item)}
+                                style={{
+                                  cursor: 'pointer',
+                                  fontWeight: 500,
+                                  textDecoration: isCrossed ? 'line-through' : 'none',
+                                  textDecorationColor: isCrossed ? '#e53e3e' : undefined,
+                                  textDecorationThickness: isCrossed ? '2px' : undefined,
+                                  color: isCrossed ? 'var(--gray-800)' : 'inherit',
+                                }}
+                                title="Click to cross off / uncross"
+                              >
+                                {item.displayTitle}
+                              </span>
+
+                              {item.isGroup && (
                                 <span
-                                  onClick={() => toggleCrossedOff(item.id)}
-                                  style={{ cursor: 'pointer', fontWeight: 500 }}
-                                  title="Click to cross off / uncross"
+                                  style={{
+                                    fontSize: '0.65rem',
+                                    background: 'var(--gray-200)',
+                                    padding: '1px 5px',
+                                    borderRadius: '8px',
+                                    color: 'var(--primary-dark)',
+                                    fontWeight: 600,
+                                  }}
+                                  title={`Combined group of ${item.animeIds.length} seasons`}
                                 >
-                                  {item.displayTitle}
+                                  Group ({item.animeIds.length})
                                 </span>
-                                {item.userProgressInfo && Object.entries(item.userProgressInfo).length > 0 && (
-                                  <span style={{ fontSize: '0.7rem', color: 'var(--accent)' }}>
-                                    ({Object.entries(item.userProgressInfo).map(([u, p]) => `${u} ${p}`).join(', ')})
-                                  </span>
-                                )}
+                              )}
+
+                              {item.userProgressInfo && Object.entries(item.userProgressInfo).length > 0 && (
+                                <span style={{ fontSize: '0.7rem', color: 'var(--accent)' }}>
+                                  ({Object.entries(item.userProgressInfo).map(([u, p]) => `${u} ${p}`).join(', ')})
+                                </span>
+                              )}
+
+                              {item.isGroup && item.groupId && (
                                 <button
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setEditingTitleId(item.id);
-                                    setTitleDraft(item.displayTitle);
+                                    handleUngroup(item.groupId!);
                                   }}
-                                  title="Rename / group series (e.g. 'AoT (S1 only)')"
+                                  title="Ungroup this series back into individual entries"
                                   style={{
                                     background: 'none',
                                     border: 'none',
@@ -577,10 +829,10 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
                                     opacity: 0.6,
                                   }}
                                 >
-                                  ✏️
+                                  🔓
                                 </button>
-                              </div>
-                            )}
+                              )}
+                            </div>
                           </li>
                         );
                       })}
@@ -627,7 +879,7 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
                         border: '1px solid var(--primary)',
                         borderRadius: '4px',
                         zIndex: 30,
-                        maxHeight: '180px',
+                        maxHeight: '200px',
                         overflowY: 'auto',
                         boxShadow: '0 4px 6px rgba(0,0,0,0.15)',
                       }}
@@ -636,8 +888,8 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
                         <div
                           key={c.id}
                           onClick={() => {
-                            if (!selectedAnimeForNewQ.some(a => a.id === c.id)) {
-                              setSelectedAnimeForNewQ([...selectedAnimeForNewQ, c]);
+                            if (!selectedCandidatesForNewQ.some(a => a.id === c.id)) {
+                              setSelectedCandidatesForNewQ([...selectedCandidatesForNewQ, c]);
                             }
                             setNewQuestionAnimeSearch('');
                           }}
@@ -649,6 +901,11 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
                           }}
                         >
                           <strong>{c.displayTitle}</strong>
+                          {c.isGroup && (
+                            <span style={{ fontSize: '0.7rem', color: 'var(--primary)', marginLeft: '4px' }}>
+                              [Group]
+                            </span>
+                          )}
                           {c.unseenUsers.length > 0 && (
                             <span style={{ fontSize: '0.75rem', color: 'var(--accent)', marginLeft: '6px' }}>
                               (Unseen: {c.unseenUsers.join(', ')})
@@ -677,10 +934,10 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
               </div>
 
               {/* Selected Anime Badges for new question */}
-              {selectedAnimeForNewQ.length > 0 && (
+              {selectedCandidatesForNewQ.length > 0 && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
                   <span style={{ fontSize: '0.8rem', color: 'var(--gray-800)' }}>Linked Anime:</span>
-                  {selectedAnimeForNewQ.map(a => (
+                  {selectedCandidatesForNewQ.map(a => (
                     <span
                       key={a.id}
                       style={{
@@ -697,7 +954,7 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
                       <span>{a.displayTitle}</span>
                       <button
                         type="button"
-                        onClick={() => setSelectedAnimeForNewQ(selectedAnimeForNewQ.filter(x => x.id !== a.id))}
+                        onClick={() => setSelectedCandidatesForNewQ(selectedCandidatesForNewQ.filter(x => x.id !== a.id))}
                         style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', padding: 0 }}
                       >
                         ×

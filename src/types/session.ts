@@ -11,11 +11,19 @@ export interface PlannedQuestion {
   notes?: string;
 }
 
+export interface AnimeGroup {
+  id: string;              // unique group identifier (e.g. "grp-...")
+  customTitle: string;     // user chosen name e.g. "A Certain Scientific Railgun"
+  animeIds: number[];      // the anime IDs merged into this group
+}
+
 export interface SessionPlan {
   plannerUsernames?: string[]; // Specific subset of players included in the game planner (if undefined/empty, defaults to all loaded users)
   questions: PlannedQuestion[];
   crossedOffAnimeIds: number[]; // Anime IDs marked as used/crossed off from the candidate pool
-  titleOverrides: Record<number, string>; // Custom rename/grouping for an anime ID (e.g., 123 -> "AoT (S1 only)")
+  crossedOffGroupIds?: string[]; // AnimeGroup IDs marked as used/crossed off
+  groups?: AnimeGroup[];        // User-defined merged anime groups
+  titleOverrides: Record<number, string>; // Custom rename for an individual anime ID
 }
 
 export interface GameSession {
@@ -53,6 +61,8 @@ export function createDefaultPlan(): SessionPlan {
     plannerUsernames: undefined,
     questions: [],
     crossedOffAnimeIds: [],
+    crossedOffGroupIds: [],
+    groups: [],
     titleOverrides: {},
   };
 }
@@ -110,6 +120,26 @@ function normalizePlan(raw: unknown): SessionPlan | undefined {
     ? p.crossedOffAnimeIds.filter((n): n is number => typeof n === 'number')
     : [];
 
+  const crossedOffGroupIds = Array.isArray(p.crossedOffGroupIds)
+    ? p.crossedOffGroupIds.filter((s): s is string => typeof s === 'string')
+    : [];
+
+  const groups: AnimeGroup[] = [];
+  if (Array.isArray(p.groups)) {
+    for (const g of p.groups) {
+      if (g && typeof g === 'object') {
+        const item = g as Record<string, unknown>;
+        if (typeof item.id === 'string' && typeof item.customTitle === 'string' && Array.isArray(item.animeIds)) {
+          groups.push({
+            id: item.id,
+            customTitle: item.customTitle,
+            animeIds: item.animeIds.filter((n): n is number => typeof n === 'number'),
+          });
+        }
+      }
+    }
+  }
+
   const titleOverrides: Record<number, string> = {};
   if (p.titleOverrides && typeof p.titleOverrides === 'object') {
     for (const [key, val] of Object.entries(p.titleOverrides as Record<string, unknown>)) {
@@ -126,6 +156,8 @@ function normalizePlan(raw: unknown): SessionPlan | undefined {
     plannerUsernames,
     questions,
     crossedOffAnimeIds,
+    crossedOffGroupIds,
+    groups,
     titleOverrides,
   };
 }
