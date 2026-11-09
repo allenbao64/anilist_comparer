@@ -32,8 +32,7 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
 
   // Per-column grouping mode; all columns stay open by default until the user closes them.
   const [groupOpenColumns, setGroupOpenColumns] = useState<string[]>(() => ['everyone', ...cachedUserData.map(u => u.username)]);
-  const [selectedIdsForGroup, setSelectedIdsForGroup] = useState<number[]>([]);
-  const [groupCustomName, setGroupCustomName] = useState('');
+  const [groupDrafts, setGroupDrafts] = useState<Record<string, { selectedIds: number[]; customName: string }>>({});
   
   // Question creation state
   const [newQuestionText, setNewQuestionText] = useState('');
@@ -49,6 +48,10 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
     crossedOffGroupIds: [],
     groups: [],
     titleOverrides: {},
+  };
+
+  const getColumnGroupDraft = (columnKey: string) => {
+    return groupDrafts[columnKey] || { selectedIds: [], customName: '' };
   };
 
   const updatePlan = (nextPlan: Partial<SessionPlan>) => {
@@ -282,12 +285,13 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
   };
 
   // Create combined anime group
-  const handleCreateGroup = () => {
-    if (selectedIdsForGroup.length < 2) {
+  const handleCreateGroup = (columnKey: string) => {
+    const draft = getColumnGroupDraft(columnKey);
+    if (draft.selectedIds.length < 2) {
       alert('Please select at least 2 anime entries to group together.');
       return;
     }
-    const name = groupCustomName.trim();
+    const name = draft.customName.trim();
     if (!name) {
       alert('Please provide a name for this combined entry.');
       return;
@@ -296,15 +300,17 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
     const newGroup: AnimeGroup = {
       id: `grp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       customTitle: name,
-      animeIds: [...selectedIdsForGroup],
+      animeIds: [...draft.selectedIds],
     };
 
     updatePlan({
       groups: [...(plan.groups || []), newGroup],
     });
 
-    setSelectedIdsForGroup([]);
-    setGroupCustomName('');
+    setGroupDrafts(prev => ({
+      ...prev,
+      [columnKey]: { selectedIds: [], customName: '' },
+    }));
   };
 
   // Disband / ungroup an anime group
@@ -768,6 +774,7 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
                   col.items.some(item => item.isGroup && item.groupId === g.id)
                 );
                 const isColGroupMode = groupOpenColumns.includes(col.key);
+                const draft = getColumnGroupDraft(col.key);
 
                 return (
                   <div
@@ -825,8 +832,13 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
                             ? current.filter(key => key !== col.key)
                             : [...current, col.key]
                         );
-                        setSelectedIdsForGroup([]);
-                        setGroupCustomName('');
+                        setGroupDrafts(prev => {
+                          if (!prev[col.key]) return prev;
+                          return {
+                            ...prev,
+                            [col.key]: { ...prev[col.key], selectedIds: [], customName: '' },
+                          };
+                        });
                       }}
                       style={{
                         background: isColGroupMode ? '#e53e3e' : 'var(--primary)',
@@ -848,13 +860,19 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
                           <input
                             type="text"
                             placeholder="Series name..."
-                            value={groupCustomName}
-                            onChange={(e) => setGroupCustomName(e.target.value)}
+                            value={draft.customName}
+                            onChange={(e) => setGroupDrafts(prev => ({
+                              ...prev,
+                              [col.key]: {
+                                selectedIds: prev[col.key]?.selectedIds || [],
+                                customName: e.target.value,
+                              },
+                            }))}
                             style={{ flex: 1, padding: '4px 6px', fontSize: '0.75rem', minWidth: 0 }}
                           />
                           <button
                             type="button"
-                            onClick={handleCreateGroup}
+                            onClick={() => handleCreateGroup(col.key)}
                             style={{
                               background: 'var(--primary)',
                               color: 'white',
@@ -865,14 +883,14 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
                               flexShrink: 0,
                             }}
                           >
-                            Combine ({selectedIdsForGroup.length})
+                            Combine ({draft.selectedIds.length})
                           </button>
                         </div>
                         <div style={{ maxHeight: '130px', overflowY: 'auto', background: 'var(--background)', padding: '4px', borderRadius: '4px', border: '1px solid var(--gray-300)' }}>
                           {ungroupedForCol.length === 0 ? (
                             <div style={{ fontSize: '0.75rem', color: 'var(--gray-800)', fontStyle: 'italic', padding: '4px' }}>No ungrouped entries in this column</div>
                           ) : ungroupedForCol.map(a => {
-                            const isChecked = selectedIdsForGroup.includes(a.id);
+                            const isChecked = draft.selectedIds.includes(a.id);
                             return (
                               <label
                                 key={a.id}
@@ -891,13 +909,25 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
                                   type="checkbox"
                                   checked={isChecked}
                                   onChange={() => {
-                                    if (isChecked) {
-                                      setSelectedIdsForGroup(selectedIdsForGroup.filter(id => id !== a.id));
-                                    } else {
-                                      setSelectedIdsForGroup([...selectedIdsForGroup, a.id]);
-                                      if (!groupCustomName.trim()) {
-                                        setGroupCustomName(a.title);
-                                      }
+                                    const current = getColumnGroupDraft(col.key).selectedIds;
+                                    const nextSelected = isChecked
+                                      ? current.filter(id => id !== a.id)
+                                      : [...current, a.id];
+                                    setGroupDrafts(prev => ({
+                                      ...prev,
+                                      [col.key]: {
+                                        selectedIds: nextSelected,
+                                        customName: prev[col.key]?.customName || '',
+                                      },
+                                    }));
+                                    if (!getColumnGroupDraft(col.key).customName.trim()) {
+                                      setGroupDrafts(prev => ({
+                                        ...prev,
+                                        [col.key]: {
+                                          selectedIds: nextSelected,
+                                          customName: a.title,
+                                        },
+                                      }));
                                     }
                                   }}
                                 />
