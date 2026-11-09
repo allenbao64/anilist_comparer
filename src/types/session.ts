@@ -2,6 +2,30 @@ import type { AnimeStatus } from '@/utils/anilist';
 
 export type SessionSortBy = 'title' | 'averageScore' | 'year' | 'popularity';
 
+export interface PlannedQuestion {
+  id: string;
+  text: string;
+  animeIds: number[];       // IDs of anime associated with this question
+  animeTitles: string[];    // Display titles (e.g. "Jujutsu Kaisen (S1-2 + 0)" or individual names)
+  unseenUsers: string[];    // Contestants who have NOT seen the anime required for this question
+  notes?: string;
+}
+
+export interface AnimeGroup {
+  id: string;              // unique group identifier (e.g. "grp-...")
+  customTitle: string;     // user chosen name e.g. "A Certain Scientific Railgun"
+  animeIds: number[];      // the anime IDs merged into this group
+}
+
+export interface SessionPlan {
+  plannerUsernames?: string[]; // Specific subset of players included in the game planner (if undefined/empty, defaults to all loaded users)
+  questions: PlannedQuestion[];
+  crossedOffAnimeIds: number[]; // Anime IDs marked as used/crossed off from the candidate pool
+  crossedOffGroupIds?: string[]; // AnimeGroup IDs marked as used/crossed off
+  groups?: AnimeGroup[];        // User-defined merged anime groups
+  titleOverrides: Record<number, string>; // Custom rename for an individual anime ID
+}
+
 export interface GameSession {
   id: string;
   name: string;
@@ -11,6 +35,7 @@ export interface GameSession {
   fetchStatuses: AnimeStatus[];
   activeStatuses: AnimeStatus[];
   requiredUsers: string[];
+  excludedUsers: string[];
   selectedGenres: string[];
   selectedTags: string[];
   selectedFormats: string[];
@@ -19,7 +44,8 @@ export interface GameSession {
   minYear: string;
   maxYear: string;
   sortBy: SessionSortBy;
-  includedAnimeIds: number[];
+  includedAnimeIds?: number[]; // optional alternate summary planner state
+  plan?: SessionPlan;
 }
 
 export const DEFAULT_FETCH_STATUSES: AnimeStatus[] = ['COMPLETED', 'CURRENT'];
@@ -29,6 +55,17 @@ export const SESSION_ID_RE =
 
 export function isValidSessionId(id: string): boolean {
   return SESSION_ID_RE.test(id);
+}
+
+export function createDefaultPlan(): SessionPlan {
+  return {
+    plannerUsernames: undefined,
+    questions: [],
+    crossedOffAnimeIds: [],
+    crossedOffGroupIds: [],
+    groups: [],
+    titleOverrides: {},
+  };
 }
 
 export function createDefaultSession(overrides: Partial<GameSession> = {}): GameSession {
@@ -42,6 +79,7 @@ export function createDefaultSession(overrides: Partial<GameSession> = {}): Game
     fetchStatuses: overrides.fetchStatuses ?? [...DEFAULT_FETCH_STATUSES],
     activeStatuses: overrides.activeStatuses ?? [...DEFAULT_FETCH_STATUSES],
     requiredUsers: overrides.requiredUsers ?? [],
+    excludedUsers: overrides.excludedUsers ?? [],
     selectedGenres: overrides.selectedGenres ?? [],
     selectedTags: overrides.selectedTags ?? [],
     selectedFormats: overrides.selectedFormats ?? [],
@@ -51,6 +89,7 @@ export function createDefaultSession(overrides: Partial<GameSession> = {}): Game
     maxYear: overrides.maxYear ?? '',
     sortBy: overrides.sortBy ?? 'title',
     includedAnimeIds: overrides.includedAnimeIds ? [...overrides.includedAnimeIds] : [],
+    plan: overrides.plan ?? createDefaultPlan(),
   };
 }
 
@@ -59,9 +98,70 @@ function asStringArray(value: unknown): string[] | undefined {
   return value.filter((item): item is string => typeof item === 'string');
 }
 
-function asNumberArray(value: unknown): number[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  return value.filter((item): item is number => typeof item === 'number' && Number.isFinite(item));
+function normalizePlan(raw: unknown): SessionPlan | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const p = raw as Record<string, unknown>;
+  const questions: PlannedQuestion[] = [];
+  if (Array.isArray(p.questions)) {
+    for (const q of p.questions) {
+      if (q && typeof q === 'object') {
+        const item = q as Record<string, unknown>;
+        questions.push({
+          id: typeof item.id === 'string' ? item.id : crypto.randomUUID(),
+          text: typeof item.text === 'string' ? item.text : '',
+          animeIds: Array.isArray(item.animeIds) ? item.animeIds.filter((n): n is number => typeof n === 'number') : [],
+          animeTitles: Array.isArray(item.animeTitles) ? item.animeTitles.filter((s): s is string => typeof s === 'string') : [],
+          unseenUsers: Array.isArray(item.unseenUsers) ? item.unseenUsers.filter((s): s is string => typeof s === 'string') : [],
+          notes: typeof item.notes === 'string' ? item.notes : undefined,
+        });
+      }
+    }
+  }
+
+  const crossedOffAnimeIds = Array.isArray(p.crossedOffAnimeIds)
+    ? p.crossedOffAnimeIds.filter((n): n is number => typeof n === 'number')
+    : [];
+
+  const crossedOffGroupIds = Array.isArray(p.crossedOffGroupIds)
+    ? p.crossedOffGroupIds.filter((s): s is string => typeof s === 'string')
+    : [];
+
+  const groups: AnimeGroup[] = [];
+  if (Array.isArray(p.groups)) {
+    for (const g of p.groups) {
+      if (g && typeof g === 'object') {
+        const item = g as Record<string, unknown>;
+        if (typeof item.id === 'string' && typeof item.customTitle === 'string' && Array.isArray(item.animeIds)) {
+          groups.push({
+            id: item.id,
+            customTitle: item.customTitle,
+            animeIds: item.animeIds.filter((n): n is number => typeof n === 'number'),
+          });
+        }
+      }
+    }
+  }
+
+  const titleOverrides: Record<number, string> = {};
+  if (p.titleOverrides && typeof p.titleOverrides === 'object') {
+    for (const [key, val] of Object.entries(p.titleOverrides as Record<string, unknown>)) {
+      const numKey = Number(key);
+      if (!isNaN(numKey) && typeof val === 'string') {
+        titleOverrides[numKey] = val;
+      }
+    }
+  }
+
+  const plannerUsernames = asStringArray(p.plannerUsernames);
+
+  return {
+    plannerUsernames,
+    questions,
+    crossedOffAnimeIds,
+    crossedOffGroupIds,
+    groups,
+    titleOverrides,
+  };
 }
 
 const SORT_VALUES: SessionSortBy[] = ['title', 'averageScore', 'year', 'popularity'];
@@ -85,6 +185,7 @@ export function normalizeSession(raw: unknown, fallbackId?: string): GameSession
     fetchStatuses: asStringArray(data.fetchStatuses) as AnimeStatus[] | undefined,
     activeStatuses: asStringArray(data.activeStatuses) as AnimeStatus[] | undefined,
     requiredUsers: asStringArray(data.requiredUsers),
+    excludedUsers: asStringArray(data.excludedUsers),
     selectedGenres: asStringArray(data.selectedGenres),
     selectedTags: asStringArray(data.selectedTags),
     selectedFormats: asStringArray(data.selectedFormats),
@@ -93,6 +194,9 @@ export function normalizeSession(raw: unknown, fallbackId?: string): GameSession
     minYear: typeof data.minYear === 'string' ? data.minYear : undefined,
     maxYear: typeof data.maxYear === 'string' ? data.maxYear : undefined,
     sortBy,
-    includedAnimeIds: asNumberArray(data.includedAnimeIds),
+    includedAnimeIds: Array.isArray(data.includedAnimeIds)
+      ? data.includedAnimeIds.filter((n): n is number => typeof n === 'number')
+      : undefined,
+    plan: normalizePlan(data.plan),
   });
 }

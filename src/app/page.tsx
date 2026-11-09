@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type React
 import { fetchAllUserData, AnimeStatus, UserStatusData } from '@/utils/anilist';
 import { GameSession } from '@/types/session';
 import SessionShell, { type WorkspaceProps } from '@/components/shell';
+import GamePlanner from '@/components/gamePlanner';
 
 const STATUS_OPTIONS: { label: string; value: AnimeStatus }[] = [
   { label: 'Completed', value: 'COMPLETED' },
@@ -41,21 +42,6 @@ const FORMAT_LABELS: Record<string, string> = {
   ONA: 'ONA',
   MUSIC: 'Music',
 };
-
-interface SharedAnime {
-  id: number;
-  title: string;
-  userStatuses: Record<string, AnimeStatus>;
-  userScores: Record<string, number | null>;
-  userProgresses: Record<string, number | null>;
-  genres: string[];
-  tags: string[];
-  year: number | null;
-  episodes: number | null;
-  format: string | null;
-  averageScore: number | null;
-  popularity: number | null;
-}
 
 function UntilFound({
   collapsed,
@@ -108,6 +94,7 @@ export function Home({
   const [progressMessage, setProgressMessage] = useState<string>('');
   const [errors, setErrors] = useState<string[]>([]);
   const [showErrorDetails, setShowErrorDetails] = useState(false);
+  const [plannerMode, setPlannerMode] = useState<'current' | 'alternate'>('current');
   const abortLoadingRef = useRef(false);
 
   const {
@@ -115,6 +102,7 @@ export function Home({
     fetchStatuses,
     activeStatuses,
     requiredUsers,
+    excludedUsers = [],
     selectedGenres,
     selectedTags,
     selectedFormats,
@@ -123,7 +111,6 @@ export function Home({
     minYear,
     maxYear,
     sortBy,
-    includedAnimeIds,
   } = session;
 
   const patch = (next: Partial<GameSession>) => onSessionChange(next);
@@ -223,11 +210,26 @@ export function Home({
     }
   };
 
-  const toggleRequiredUser = (username: string) => {
+  const cycleContestantFilter = (username: string) => {
+    // Cycle: Required (checked) -> Excluded (x) -> Deactivated (off) -> Required (checked)
     if (requiredUsers.includes(username)) {
-      patch({ requiredUsers: requiredUsers.filter(u => u !== username) });
+      // Checked -> Excluded
+      patch({
+        requiredUsers: requiredUsers.filter(u => u !== username),
+        excludedUsers: excludedUsers.includes(username) ? excludedUsers : [...excludedUsers, username],
+      });
+    } else if (excludedUsers.includes(username)) {
+      // Excluded -> Deactivated
+      patch({
+        requiredUsers: requiredUsers.filter(u => u !== username),
+        excludedUsers: excludedUsers.filter(u => u !== username),
+      });
     } else {
-      patch({ requiredUsers: [...requiredUsers, username] });
+      // Deactivated -> Checked
+      patch({
+        requiredUsers: [...requiredUsers, username],
+        excludedUsers: excludedUsers.filter(u => u !== username),
+      });
     }
   };
 
@@ -255,6 +257,7 @@ export function Home({
     patch({
       usernames: ['', '', '', ''],
       requiredUsers: [],
+      excludedUsers: [],
       selectedGenres: [],
       selectedTags: [],
       selectedFormats: [],
@@ -262,6 +265,7 @@ export function Home({
       maxEpisodes: '',
       minYear: '',
       maxYear: '',
+      includedAnimeIds: [],
     });
     setCachedUserData([]);
     setErrors([]);
@@ -372,7 +376,7 @@ export function Home({
     abortLoadingRef.current = false;
     
     if (!opts?.preserveFilters) {
-      patch({ activeStatuses: [...fetchStatuses], includedAnimeIds: [] });
+      patch({ activeStatuses: [...fetchStatuses] });
     }
     
     const results: UserStatusData[] = [];
@@ -462,7 +466,10 @@ export function Home({
     setUserLastUpdated(timestamps);
     setUserUpdatesBehind(updatesBehindMap);
     if (!opts?.preserveFilters) {
-      patch({ requiredUsers: results.map(r => r.username) });
+      patch({
+        requiredUsers: results.map(r => r.username),
+        excludedUsers: [],
+      });
     }
     setIsLoading(false);
     setProgressMessage('');
@@ -510,10 +517,34 @@ export function Home({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const animePool = useMemo(() => {
-    if (cachedUserData.length === 0) return [] as SharedAnime[];
+  const includedAnimeIds = session.includedAnimeIds ?? [];
 
-    const animeMap = new Map<number, SharedAnime>();
+  const toggleIncludedAnime = (id: number) => {
+    const isSelected = includedAnimeIds.includes(id);
+    onSessionChange({
+      includedAnimeIds: isSelected
+        ? includedAnimeIds.filter(existingId => existingId !== id)
+        : [...includedAnimeIds, id],
+    });
+  };
+
+  const filteredResults = useMemo(() => {
+    if (cachedUserData.length === 0) return [];
+
+    const animeMap = new Map<number, { 
+      id: number; 
+      title: string; 
+      userStatuses: Record<string, AnimeStatus>; 
+      userScores: Record<string, number | null>;
+      userProgresses: Record<string, number | null>;
+      genres: string[]; 
+      tags: string[];
+      year: number | null;
+      episodes: number | null;
+      format: string | null;
+      averageScore: number | null;
+      popularity: number | null;
+    }>();
 
     cachedUserData.forEach(user => {
       activeStatuses.forEach(status => {
@@ -544,19 +575,18 @@ export function Home({
       });
     });
 
-    return Array.from(animeMap.values());
-  }, [cachedUserData, activeStatuses]);
-
-  const filteredResults = useMemo(() => {
     const parsedMinYear = minYear.trim() !== '' ? parseInt(minYear, 10) : null;
     const parsedMaxYear = maxYear.trim() !== '' ? parseInt(maxYear, 10) : null;
     const parsedMinEp = minEpisodes.trim() !== '' ? parseInt(minEpisodes, 10) : null;
     const parsedMaxEp = maxEpisodes.trim() !== '' ? parseInt(maxEpisodes, 10) : null;
 
-    return animePool
+    return Array.from(animeMap.values())
       .filter(item => {
         // Must be seen by EVERY user in requiredUsers
         const matchesUsers = requiredUsers.every(reqUser => !!item.userStatuses[reqUser]);
+
+        // Must NOT be on the list of ANY user in excludedUsers
+        const notExcluded = excludedUsers.every(excUser => !item.userStatuses[excUser]);
         
         // If genres are selected, must match at least one
         const matchesGenres = selectedGenres.length === 0 || 
@@ -577,10 +607,10 @@ export function Home({
         const matchesEpisodes = matchesMinEp && matchesMaxEp;
 
         // Format filter
-        const matchesFormat = selectedFormats.length === 0 ||
+        const matchesFormat = selectedFormats.length === 0 || 
           (item.format !== null && selectedFormats.includes(item.format));
 
-        return matchesUsers && matchesGenres && matchesTags && matchesYear && matchesEpisodes && matchesFormat;
+        return matchesUsers && notExcluded && matchesGenres && matchesTags && matchesYear && matchesEpisodes && matchesFormat;
       })
       .sort((a, b) => {
         switch (sortBy) {
@@ -594,28 +624,18 @@ export function Home({
             return a.title.toLowerCase().localeCompare(b.title.toLowerCase());
         }
       });
-  }, [animePool, requiredUsers, selectedGenres, selectedTags, minYear, maxYear, minEpisodes, maxEpisodes, selectedFormats, sortBy]);
+  }, [cachedUserData, activeStatuses, requiredUsers, excludedUsers, selectedGenres, selectedTags, minYear, maxYear, minEpisodes, maxEpisodes, selectedFormats, sortBy]);
 
-  const includedIdSet = useMemo(() => new Set(includedAnimeIds), [includedAnimeIds]);
-
-  const includedAnime = useMemo(
-    () => animePool.filter(anime => includedIdSet.has(anime.id)),
-    [animePool, includedIdSet],
-  );
+  const includedAnime = useMemo(() => {
+    const selected = new Set(includedAnimeIds);
+    return filteredResults.filter(anime => selected.has(anime.id));
+  }, [filteredResults, includedAnimeIds]);
 
   const hiddenIncludedCount = useMemo(() => {
-    if (includedAnime.length === 0) return 0;
+    if (includedAnimeIds.length === 0) return 0;
     const visibleIds = new Set(filteredResults.map(anime => anime.id));
-    return includedAnime.filter(anime => !visibleIds.has(anime.id)).length;
-  }, [includedAnime, filteredResults]);
-
-  const toggleIncluded = (id: number) => {
-    patch({
-      includedAnimeIds: includedIdSet.has(id)
-        ? includedAnimeIds.filter(existing => existing !== id)
-        : [...includedAnimeIds, id],
-    });
-  };
+    return includedAnimeIds.filter(id => !visibleIds.has(id)).length;
+  }, [filteredResults, includedAnimeIds]);
 
   const copyToClipboard = () => {
     if (filteredResults.length === 0) return;
@@ -871,34 +891,76 @@ export function Home({
             <div>
               <h3 style={{ fontSize: '1rem', marginBottom: '0.8rem' }}>Required Contestants</h3>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.8rem' }}>
-                {cachedUserData.map(user => (
-                  <div key={user.username} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={requiredUsers.includes(user.username)}
-                        onChange={() => toggleRequiredUser(user.username)}
-                      />
-                      <span>{user.username}</span>
-                    </label>
-                    <a
-                      href={`https://anilist.co/user/${encodeURIComponent(user.username)}/`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title={`View ${user.username}'s AniList profile`}
-                      style={{
-                        fontSize: '0.75rem',
-                        color: 'var(--primary)',
-                        textDecoration: 'none',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        opacity: 0.8
-                      }}
-                    >
-                      ↗
-                    </a>
-                  </div>
-                ))}
+                {cachedUserData.map(user => {
+                  const isReq = requiredUsers.includes(user.username);
+                  const isExc = excludedUsers.includes(user.username);
+
+                  return (
+                    <div key={user.username} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                      <label
+                        style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', userSelect: 'none' }}
+                        title={`${user.username}: ${isReq ? 'Required (click to exclude)' : isExc ? 'Excluded (click to deactivate)' : 'Deactivated (click to require)'}`}
+                      >
+                        <span
+                          role="checkbox"
+                          aria-checked={isReq ? 'true' : isExc ? 'mixed' : 'false'}
+                          tabIndex={0}
+                          onClick={() => cycleContestantFilter(user.username)}
+                          onKeyDown={(e) => {
+                            if (e.key === ' ' || e.key === 'Enter') {
+                              e.preventDefault();
+                              cycleContestantFilter(user.username);
+                            }
+                          }}
+                          style={{
+                            width: '18px',
+                            height: '18px',
+                            borderRadius: '3px',
+                            border: `1.5px solid ${isReq ? 'var(--primary)' : isExc ? 'var(--accent)' : 'var(--gray-300)'}`,
+                            backgroundColor: isReq ? 'var(--primary)' : isExc ? 'var(--accent)' : 'var(--background)',
+                            color: 'white',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: isExc ? '0.75rem' : '0.8rem',
+                            fontWeight: 'bold',
+                            lineHeight: 1,
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
+                          {isReq && '✓'}
+                          {isExc && '✕'}
+                        </span>
+                        <span
+                          onClick={() => cycleContestantFilter(user.username)}
+                          style={{
+                            color: isReq ? 'var(--foreground)' : isExc ? 'var(--accent)' : 'var(--gray-800)',
+                            fontWeight: isReq || isExc ? 600 : 'normal',
+                          }}
+                        >
+                          {user.username}
+                        </span>
+                      </label>
+                      <a
+                        href={`https://anilist.co/user/${encodeURIComponent(user.username)}/`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={`View ${user.username}'s AniList profile`}
+                        style={{
+                          fontSize: '0.75rem',
+                          color: 'var(--primary)',
+                          textDecoration: 'none',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          opacity: 0.8
+                        }}
+                      >
+                        ↗
+                      </a>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -1181,12 +1243,10 @@ export function Home({
             </div>
           </div>
 
-          <div className="results-layout">
-          <div className="results-table-wrap">
+          <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', background: 'var(--background)' }}>
               <thead>
                 <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--gray-300)' }}>
-                  <th style={{ padding: '12px 8px', width: '36px' }} aria-label="Include in game" />
                   <th style={{ padding: '12px' }}>Anime Title</th>
                   {cachedUserData.map(user => {
                     const isUserSyncing = !!syncingUsers[user.username];
@@ -1260,6 +1320,11 @@ export function Home({
                             Required
                           </div>
                         )}
+                        {excludedUsers.includes(user.username) && (
+                          <div style={{ fontSize: '0.6rem', color: 'var(--accent)', marginTop: '2px', fontWeight: 600 }}>
+                            Excluded
+                          </div>
+                        )}
                       </th>
                     );
                   })}
@@ -1268,26 +1333,14 @@ export function Home({
               <tbody>
                 {filteredResults.map((anime, idx) => {
                   const isExpanded = customExpanded[anime.id] ?? showAllDetails;
-                  const included = includedIdSet.has(anime.id);
                   return (
                     <tr
                       key={anime.id}
                       style={{
                         borderBottom: '1px solid var(--gray-200)',
-                        background: included
-                          ? 'color-mix(in srgb, var(--primary) 16%, transparent)'
-                          : idx % 2 === 0 ? 'transparent' : 'var(--gray-100)',
-                        boxShadow: included ? 'inset 3px 0 0 var(--primary)' : undefined,
+                        background: idx % 2 === 0 ? 'transparent' : 'var(--gray-100)',
                       }}
                     >
-                      <td style={{ padding: isExpanded ? '10px 8px' : '8px', textAlign: 'center' }}>
-                        <input
-                          type="checkbox"
-                          checked={included}
-                          onChange={() => toggleIncluded(anime.id)}
-                          aria-label={`Include ${anime.title} in the game`}
-                        />
-                      </td>
                       <td style={{ padding: isExpanded ? '10px 12px' : '8px 12px', fontWeight: 500 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                           <button
@@ -1348,6 +1401,24 @@ export function Home({
                           >
                             AniList ↗
                           </a>
+                          {plannerMode === 'alternate' && (
+                            <button
+                              type="button"
+                              onClick={() => toggleIncludedAnime(anime.id)}
+                              style={{
+                                fontSize: '0.72rem',
+                                padding: '2px 7px',
+                                borderRadius: '4px',
+                                border: '1px solid var(--gray-300)',
+                                background: includedAnimeIds.includes(anime.id) ? 'var(--primary)' : 'var(--gray-200)',
+                                color: includedAnimeIds.includes(anime.id) ? 'white' : 'var(--foreground)',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              {includedAnimeIds.includes(anime.id) ? '✓ In summary' : '+ Add summary'}
+                            </button>
+                          )}
                         </div>
                         <UntilFound
                           collapsed={!isExpanded}
@@ -1419,50 +1490,98 @@ export function Home({
               </tbody>
             </table>
           </div>
-          {includedAnime.length > 0 && (
-            <aside className="game-summary">
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', flexWrap: 'wrap', marginBottom: includedAnime.length === 0 ? 0 : '0.75rem' }}>
-                <h3 style={{ fontSize: '1rem' }}>Game summary</h3>
-                {includedAnime.length > 0 && (
-                  <p style={{ fontSize: '0.85rem' }}>
-                    {includedAnime.length} question{includedAnime.length === 1 ? '' : 's'}
-                    {hiddenIncludedCount > 0 && (
-                      <span style={{ color: 'var(--gray-800)' }}> · {hiddenIncludedCount} hidden by current filters</span>
-                    )}
-                  </p>
-                )}
-                {includedAnimeIds.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => patch({ includedAnimeIds: [] })}
-                    style={{ marginLeft: 'auto', background: 'none', color: 'var(--accent)', fontSize: '0.85rem', textDecoration: 'underline', padding: 0 }}
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-              
-                <div className="game-summary-people">
-                  {cachedUserData.map(user => {
-                    const onList = includedAnime.filter(anime => !!anime.userStatuses[user.username]).length;
-                    const pct = Math.round((onList / includedAnime.length) * 100);
-                    return (
-                      <div key={user.username} className="game-summary-person">
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', fontSize: '0.85rem' }}>
-                          <span style={{ fontWeight: 600 }}>{user.username}</span>
-                          <span style={{ whiteSpace: 'nowrap' }}>{onList} / {includedAnime.length} ({pct}%)</span>
-                        </div>
-                        <div style={{ marginTop: '4px', height: '8px', borderRadius: '999px', background: 'var(--gray-200)', overflow: 'hidden' }}>
-                          <div style={{ width: `${pct}%`, height: '100%', background: 'var(--primary)' }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-            </aside>
-          )}
-          </div>
         </section>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.25rem', marginBottom: '0.5rem' }}>
+        <div style={{ display: 'inline-flex', background: 'var(--gray-200)', border: '1px solid var(--gray-300)', borderRadius: '999px', padding: '4px', gap: '4px' }}>
+          {(['current', 'alternate'] as const).map(mode => {
+            const isActive = plannerMode === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setPlannerMode(mode)}
+                style={{
+                  background: isActive ? 'var(--primary)' : 'transparent',
+                  color: isActive ? 'white' : 'var(--foreground)',
+                  border: 'none',
+                  borderRadius: '999px',
+                  padding: '6px 12px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                {mode === 'current' ? 'v2' : 'v1'}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {plannerMode === 'alternate' && (
+        <aside
+          style={{
+            background: 'var(--gray-100)',
+            border: '1px solid var(--gray-300)',
+            borderRadius: 'var(--border-radius)',
+            padding: '1rem',
+            marginBottom: '1.5rem',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', marginBottom: includedAnime.length === 0 ? 0 : '0.75rem' }}>
+            <h3 style={{ fontSize: '1rem', margin: 0 }}>v1</h3>
+            {includedAnime.length > 0 && (
+              <span style={{ fontSize: '0.85rem', color: 'var(--gray-800)' }}>
+                {includedAnime.length} selected
+                {hiddenIncludedCount > 0 && (
+                  <span> · {hiddenIncludedCount} hidden by current filters</span>
+                )}
+              </span>
+            )}
+            {includedAnimeIds.length > 0 && (
+              <button
+                type="button"
+                onClick={() => onSessionChange({ includedAnimeIds: [] })}
+                style={{ marginLeft: 'auto', background: 'none', color: 'var(--accent)', fontSize: '0.85rem', textDecoration: 'underline', padding: 0, cursor: 'pointer' }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {includedAnime.length === 0 ? (
+            <div style={{ fontSize: '0.85rem', color: 'var(--gray-800)', fontStyle: 'italic' }}>
+              No anime selected for the alternate summary yet.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem 1.25rem' }}>
+              {cachedUserData.map(user => {
+                const onList = includedAnime.filter(anime => !!anime.userStatuses[user.username]).length;
+                const pct = Math.round((onList / includedAnime.length) * 100);
+                return (
+                  <div key={user.username} style={{ flex: '1 1 180px', minWidth: '160px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', fontSize: '0.85rem' }}>
+                      <span style={{ fontWeight: 600 }}>{user.username}</span>
+                      <span style={{ whiteSpace: 'nowrap' }}>{onList} / {includedAnime.length} ({pct}%)</span>
+                    </div>
+                    <div style={{ marginTop: '4px', height: '8px', borderRadius: '999px', background: 'var(--gray-200)', overflow: 'hidden' }}>
+                      <div style={{ width: `${pct}%`, height: '100%', background: 'var(--primary)' }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </aside>
+      )}
+
+      {cachedUserData.length > 0 && plannerMode === 'current' && (
+        <GamePlanner
+          session={session}
+          onSessionChange={onSessionChange}
+          cachedUserData={cachedUserData}
+        />
       )}
 
       <style jsx>{`
@@ -1481,35 +1600,6 @@ export function Home({
         .user-profile-link:hover {
           color: var(--primary-dark) !important;
           text-decoration: underline !important;
-        }
-        .results-layout {
-          display: flex;
-          flex-direction: column;
-          gap: 1rem;
-        }
-        .results-table-wrap {
-          min-width: 0;
-          overflow-x: auto;
-        }
-        .game-summary {
-          order: -1;
-          position: sticky;
-          top: 3.5rem;
-          z-index: 2;
-          width: 100%;
-          background: var(--gray-100);
-          border: 1px solid var(--gray-300);
-          border-radius: var(--border-radius);
-          padding: 0.85rem 1rem;
-        }
-        .game-summary-people {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 0.75rem 1.25rem;
-        }
-        .game-summary-person {
-          flex: 1 1 180px;
-          min-width: 160px;
         }
       `}</style>
     </>
