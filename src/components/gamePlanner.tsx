@@ -692,7 +692,7 @@ export default function GamePlanner({ session, onSessionChange, cachedUserData }
                                   )}
 
                                   {item.userProgressInfo && Object.entries(item.userProgressInfo).length > 0 && (
-                                    <span style={{ fontSize: '0.7rem', color: 'var(--accent)' }}>
+                                    <span style={{ fontSize: '0.7rem', color: 'var(--primary)' }}>
                                       ({Object.entries(item.userProgressInfo).map(([u, p]) => `${u} ${p}`).join(', ')})
                                     </span>
                                   )}
